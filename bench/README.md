@@ -18,8 +18,12 @@ reference profile.
 bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/bench/perfcheck.sh)
 ```
 
-Installs `sysbench` if it is missing (`apt`, or `dnf` with EPEL enabled first — it is not in the
-RHEL base repos). Pass `--no-install` to skip that.
+Runs on Debian/Ubuntu, the RHEL family and macOS. Installs `sysbench` if it is missing —
+`apt`, `dnf` with EPEL enabled first (it is not in the RHEL base repos), or `brew`. Pass
+`--no-install` to skip that.
+
+On macOS the machine facts come from `sysctl` instead of `/proc`, and the disk tests always go
+through the page cache because macOS has no `O_DIRECT`; the report says so when that happens.
 
 Across a fleet, downloading it first so `--remote` can pipe the file to each host:
 
@@ -57,14 +61,32 @@ machine. The same run scored 83.8 before the quota was taken into account and 99
 
 ### What each test measures
 
-| Test | Parameters | Metric |
+| Area | Test | Metric |
 |---|---|---|
-| cpu, all threads | `--cpu-max-prime=20000`, threads = usable cores | events/s |
-| cpu, single thread | same, one thread | events/s |
-| memory | 1 MiB blocks, write, threads = usable cores | MiB/s |
-| threads | 4× oversubscribed, `--thread-yields=1000 --thread-locks=8` | events/s, derived from the total event count — this test prints no rate of its own |
-| mutex | 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s |
-| file I/O (opt-in) | random read/write, `--file-fsync-freq=0` | IOPS, MiB/s, 95th percentile latency |
+| **CPU** | all threads, `--cpu-max-prime=20000` | events/s |
+| | single thread, same workload | events/s |
+| **Memory** | sequential write, 1 MiB blocks | MiB/s |
+| | sequential read, 1 MiB blocks | MiB/s |
+| | random write, 4 KiB blocks — about access latency rather than bandwidth | MiB/s |
+| **Scheduler** | threads, 4× oversubscribed, `--thread-yields=1000 --thread-locks=8` | events/s, derived from the total event count — this test prints no rate of its own |
+| | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s |
+| **Disk** (opt-in) | sequential read | MiB/s |
+| | random read/write | IOPS, MiB/s, 95th percentile latency |
+| | sequential write | MiB/s |
+
+Not covered: network, GPU, NUMA locality, and any storage other than the filesystem holding
+`--io-dir`.
+
+The memory subscore is the geometric mean of the sequential read and write figures. The random
+4 KiB number is reported next to them because it says something different, not because it
+averages well with them.
+
+Two things about the disk tests are deliberate. They pass `--file-extra-flags=direct` so the
+page cache does not answer the requests, falling back per test where O_DIRECT is unavailable
+(tmpfs, some overlay and network mounts, macOS) and saying so. And the sequential **write**
+runs last: sysbench leaves the files shorter than `prepare` made them, and anything run
+afterwards aborts with `FATAL: Size of file 'test_file.12' is 57.5MiB, but at least 64MiB is
+expected`.
 
 The mutex test takes `--mutex-locks` *per thread*, so its elapsed time is not comparable
 between machines with different core counts. Throughput is, which is why the metric is locks/s
@@ -148,8 +170,11 @@ Composite
 bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/bench/perfcheck.sh)
 ```
 
-`sysbench` 缺失时会自动装(`apt`;RHEL 系先启用 EPEL —— 基础仓库里没有它)。
-用 `--no-install` 可跳过。
+支持 Debian/Ubuntu、RHEL 系与 macOS。`sysbench` 缺失时会自动装 —— `apt`、
+`dnf`(先启用 EPEL,基础仓库里没有它)或 `brew`。用 `--no-install` 可跳过。
+
+macOS 上机器信息取自 `sysctl` 而非 `/proc`;由于 macOS 没有 `O_DIRECT`,磁盘测试必然经过
+page cache,报告里会明确标出。
 
 批量走 ssh(先下载成文件,`--remote` 会把脚本本体喂给每台机器):
 
@@ -186,14 +211,28 @@ bash perfcheck.sh --remote app1,app2,db1
 
 ### 每项测什么
 
-| 测试 | 参数 | 指标 |
+| 领域 | 测试 | 指标 |
 |---|---|---|
-| cpu 全线程 | `--cpu-max-prime=20000`,线程 = 可用核数 | events/s |
-| cpu 单线程 | 同上,1 线程 | events/s |
-| 内存 | 1 MiB 块、写、线程 = 可用核数 | MiB/s |
-| 线程 | 4 倍超订,`--thread-yields=1000 --thread-locks=8` | events/s,由总事件数换算 —— 这项测试本身不输出速率 |
-| 互斥锁 | 4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s |
-| 文件 I/O(需 `--io`) | 随机读写,`--file-fsync-freq=0` | IOPS、MiB/s、95 分位延迟 |
+| **CPU** | 全线程,`--cpu-max-prime=20000` | events/s |
+| | 单线程,同样负载 | events/s |
+| **内存** | 顺序写,1 MiB 块 | MiB/s |
+| | 顺序读,1 MiB 块 | MiB/s |
+| | 随机写,4 KiB 块 —— 反映的是访问延迟而非带宽 | MiB/s |
+| **调度** | threads,4 倍超订,`--thread-yields=1000 --thread-locks=8` | events/s,由总事件数换算 —— 这项测试本身不输出速率 |
+| | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s |
+| **磁盘**(需 `--io`) | 顺序读 | MiB/s |
+| | 随机读写 | IOPS、MiB/s、95 分位延迟 |
+| | 顺序写 | MiB/s |
+
+未覆盖:网络、GPU、NUMA 局部性,以及 `--io-dir` 所在文件系统之外的任何存储。
+
+内存子分取顺序读与顺序写的几何平均。随机 4 KiB 那个数字列在旁边,是因为它说明的是另一回事,
+不是因为它适合和前两者平均。
+
+磁盘测试有两处是刻意为之。一是加了 `--file-extra-flags=direct`,不让 page cache 代答请求;
+在 O_DIRECT 不可用的地方(tmpfs、部分 overlay 与网络挂载、macOS)按测试项各自回退并明确说明。
+二是**顺序写放在最后**:sysbench 会把文件写得比 `prepare` 建出来时更短,之后再跑任何一项都会
+直接 `FATAL: Size of file 'test_file.12' is 57.5MiB, but at least 64MiB is expected`。
 
 mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不同核数的机器之间不可比,
 吞吐才可比 —— 这就是指标用 locks/s 而不是秒的原因。

@@ -133,10 +133,50 @@ CPU_THREADS=1         # threads the tests actually use
 MEM_TOTAL_MB=0; MEM_AVAIL_MB=0; VIRT="none"; GOVERNOR=""; DISK_TYPE=""
 OS_NAME="unknown"; PKG=""; SUDO=""
 
+OS_KIND="linux"
+
+detect_machine_macos() {
+  OS_KIND="macos"
+  OS_NAME="macOS $(sw_vers -productVersion 2>/dev/null)"
+  has brew && PKG="brew"
+  CPU_LOGICAL="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 1)"
+  CPU_PHYSICAL="$(sysctl -n hw.physicalcpu 2>/dev/null || echo "$CPU_LOGICAL")"
+  CPU_SOCKETS=1
+  CPU_MODEL="$(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
+  [ -n "$CPU_MODEL" ] || CPU_MODEL="$(sysctl -n hw.model 2>/dev/null)"
+  [ -n "$CPU_MODEL" ] || CPU_MODEL="$(uname -m) (model not reported)"
+  MEM_TOTAL_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  # free + inactive pages is the closest thing to MemAvailable here
+  if has vm_stat; then
+    local psize free inactive
+    psize="$(sysctl -n hw.pagesize 2>/dev/null || echo 4096)"
+    free="$(vm_stat 2>/dev/null | awk '/Pages free/{gsub(/\./,"",$3); print $3}')"
+    inactive="$(vm_stat 2>/dev/null | awk '/Pages inactive/{gsub(/\./,"",$3); print $3}')"
+    MEM_AVAIL_MB=$(( ( (${free:-0} + ${inactive:-0}) * psize ) / 1048576 ))
+  fi
+  if [ "$(sysctl -n kern.hv_vmm_present 2>/dev/null || echo 0)" = "1" ]; then
+    VIRT="hypervisor"
+  else
+    VIRT="none"
+  fi
+  CPU_THREADS="$CPU_LOGICAL"
+  # macOS has no O_DIRECT; sysbench cannot bypass the cache here
+  IO_NO_DIRECT=1
+}
+
+load_1min() {
+  if [ -r /proc/loadavg ]; then
+    awk '{print $1}' /proc/loadavg 2>/dev/null
+  else
+    sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'
+  fi
+}
+
 detect_machine() {
   case "$(uname -s)" in
     Linux) : ;;
-    *) echo "perfcheck.sh targets Linux; this host is $(uname -s)" >&2; exit 2 ;;
+    Darwin) detect_machine_macos; return 0 ;;
+    *) echo "perfcheck.sh runs on Linux and macOS; this host is $(uname -s)" >&2; exit 2 ;;
   esac
 
   if [ -r /etc/os-release ]; then
@@ -233,6 +273,7 @@ ensure_sysbench() {
   case "$PKG" in
     apt) DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -qq >/dev/null 2>&1
          DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq sysbench >/dev/null 2>&1 ;;
+    brew) brew install sysbench >/dev/null 2>&1 ;;
     dnf|yum)
          # sysbench lives in EPEL on the RHEL family
          if ! $SUDO "$PKG" repolist enabled 2>/dev/null | grep -qi '^epel'; then
@@ -250,7 +291,7 @@ ensure_sysbench() {
 
 check_idle() {
   local load cores pct
-  load="$(awk '{print $1}' /proc/loadavg 2>/dev/null)"
+  load="$(load_1min)"
   [ -n "$load" ] || return 0
   cores="$CPU_THREADS"
   pct="$(fpct "$load" "$cores")"
@@ -269,7 +310,9 @@ check_idle() {
 # ---------------------------------------------------------------------------
 # the tests - every parameter is derived from the machine
 # ---------------------------------------------------------------------------
-R_CPU_MULTI=0; R_CPU_SINGLE=0; R_MEMORY=0; R_THREADS=0; R_MUTEX=0
+R_CPU_MULTI=0; R_CPU_SINGLE=0; R_THREADS=0; R_MUTEX=0
+R_MEM_WRITE=0; R_MEM_READ=0; R_MEM_RND=0; R_MEMORY=0
+R_IO_SEQ_READ=0; R_IO_SEQ_WRITE=0
 R_IO_IOPS=0; R_IO_READ=0; R_IO_WRITE=0; R_IO_P95=0
 
 sb_field() {  # sb_field <output> <sed pattern>
@@ -288,17 +331,31 @@ run_cpu() {
   kv "single thread" "${R_CPU_SINGLE:-0} events/s"
 }
 
-run_memory() {
-  local out total_mb
-  head2 "Memory"
-  # ask for far more than can be moved in the time limit, so --time decides the run
+mem_run() {  # mem_run <oper> <access mode> <block size>
+  local total_mb out
   total_mb=$(( MEM_TOTAL_MB * 100 ))
   [ "$total_mb" -gt 0 ] || total_mb=100000
   out="$(sysbench memory --threads="$CPU_THREADS" --time="$TIME_PER_TEST" \
-          --memory-block-size=1M --memory-total-size="${total_mb}M" \
-          --memory-oper=write run 2>/dev/null)"
-  R_MEMORY="$(echo "$out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p' | head -1)"
-  kv "write, 1M blocks" "${R_MEMORY:-0} MiB/s"
+          --memory-block-size="$3" --memory-total-size="${total_mb}M" \
+          --memory-oper="$1" --memory-access-mode="$2" run 2>/dev/null)"
+  echo "$out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p' | head -1
+}
+
+run_memory() {
+  head2 "Memory"
+  R_MEM_WRITE="$(mem_run write seq 1M)"
+  kv "sequential write" "${R_MEM_WRITE:-0} MiB/s   (1M blocks)"
+  R_MEM_READ="$(mem_run read seq 1M)"
+  kv "sequential read" "${R_MEM_READ:-0} MiB/s   (1M blocks)"
+  # small blocks in random order: this one is about access latency, not bandwidth
+  R_MEM_RND="$(mem_run write rnd 4K)"
+  kv "random write" "${R_MEM_RND:-0} MiB/s   (4K blocks, random order)"
+
+  # the memory subscore uses read and write together; the random figure is
+  # reported because it says something different, not because it averages well
+  R_MEMORY="$(awk -v a="${R_MEM_WRITE:-0}" -v b="${R_MEM_READ:-0}" \
+              'BEGIN{ if (a+0<=0 || b+0<=0) { print (a+0>0?a:b) } else { printf "%.2f", sqrt(a*b) } }')"
+  kv "used for scoring" "${R_MEMORY:-0} MiB/s   (geometric mean of read and write)"
 }
 
 run_threads() {
@@ -338,6 +395,8 @@ io_cleanup() {
 trap io_cleanup EXIT INT TERM
 
 IO_SIZE_MB=0
+IO_CACHED=0
+IO_NO_DIRECT=""     # set on platforms where O_DIRECT does not exist at all
 run_io() {
   [ "$DO_IO" -eq 1 ] || return 0
   local dir free_mb out
@@ -360,10 +419,37 @@ run_io() {
   ( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" prepare >/dev/null 2>&1 ) || {
     say "  ${C_WARN}prepare failed${C_RESET}"; return 0; }
   IO_PREPARED=1
-  out="$( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" --file-test-mode=rndrw \
-            --time="$TIME_PER_TEST" --max-requests=0 --file-fsync-freq=0 run 2>/dev/null )"
-  io_cleanup
 
+  # Without O_DIRECT the page cache answers most of the requests and the result
+  # describes the cache, not the disk. Not every filesystem or platform supports
+  # it - tmpfs, some overlay and network mounts, and macOS - and support can
+  # differ per access pattern, so every mode falls back on its own.
+  io_mode() {  # io_mode <file-test-mode> <field sed pattern>
+    local out
+    if [ -z "$IO_NO_DIRECT" ]; then
+      out="$( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" --file-test-mode="$1" \
+              --time="$TIME_PER_TEST" --max-requests=0 --file-fsync-freq=0 \
+              --file-extra-flags=direct run 2>/dev/null )"
+      if [ -n "$(sb_field "$out" "$2")" ]; then
+        echo "$out"
+        return 0
+      fi
+      IO_CACHED=1
+    fi
+    ( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" --file-test-mode="$1" \
+        --time="$TIME_PER_TEST" --max-requests=0 --file-fsync-freq=0 run 2>/dev/null )
+  }
+
+  # Order matters. seqwr leaves the files shorter than prepare made them, and any
+  # test run afterwards aborts with
+  #   FATAL: Size of file 'test_file.12' is 57.5MiB, but at least 64MiB is expected
+  # so the sequential write goes last, after everything that reads the file set.
+  out="$(io_mode seqrd 's/^ *read, MiB\/s: *//p')"
+  R_IO_SEQ_READ="$(sb_field "$out" 's/^ *read, MiB\/s: *//p')"
+  kv "sequential read" "${R_IO_SEQ_READ:-0} MiB/s"
+
+  # random read/write - what a database does
+  out="$(io_mode rndrw 's/^ *reads\/s: *//p')"
   R_IO_READ="$(sb_field "$out" 's/^ *read, MiB\/s: *//p')"
   R_IO_WRITE="$(sb_field "$out" 's/^ *written, MiB\/s: *//p')"
   local r w
@@ -373,6 +459,13 @@ run_io() {
   R_IO_P95="$(sb_field "$out" 's/^ *95th percentile: *//p')"
   kv "random read/write" "${R_IO_IOPS} IOPS   ${R_IO_READ:-0} + ${R_IO_WRITE:-0} MiB/s"
   kv "95th pct latency" "${R_IO_P95:-?} ms"
+
+  # last, because it shortens the files
+  out="$(io_mode seqwr 's/^ *written, MiB\/s: *//p')"
+  R_IO_SEQ_WRITE="$(sb_field "$out" 's/^ *written, MiB\/s: *//p')"
+  kv "sequential write" "${R_IO_SEQ_WRITE:-0} MiB/s"
+
+  io_cleanup
 }
 
 # ---------------------------------------------------------------------------
@@ -414,11 +507,18 @@ report() {
   printf "  %-24s %12s %12s %6s\n" "cpu, all cores"   "${R_CPU_MULTI:-0}"  "$REF_CPU_MULTI"  "$S_CPU_MULTI"
   printf "  %-24s %12s %12s %6s\n" "cpu, single thread" "${R_CPU_SINGLE:-0}" "$REF_CPU_SINGLE" "$S_CPU_SINGLE"
   printf "  %-24s %12s %12s %6s\n" "memory MiB/s"     "${R_MEMORY:-0}"     "$REF_MEMORY"     "$S_MEMORY"
+  printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq write / read" "${R_MEM_WRITE:-0} / ${R_MEM_READ:-0}" "-" "-"
+  printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  random 4K write" "${R_MEM_RND:-0}" "-" "-"
   printf "  %-24s %12s %12s %6s\n" "threads events/s" "${R_THREADS:-0}"    "$REF_THREADS"    "$S_THREADS"
   printf "  %-24s %12s %12s %6s\n" "mutex locks/s"    "${R_MUTEX:-0}"      "$REF_MUTEX"      "$S_MUTEX"
   if [ "$DO_IO" -eq 1 ]; then
     printf "  %-24s %12s %12s %6s\n" "file I/O IOPS"  "${R_IO_IOPS:-0}"    "$REF_IO_IOPS"    "$S_IO"
+    printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq read / write MiB/s" "${R_IO_SEQ_READ:-0} / ${R_IO_SEQ_WRITE:-0}" "-" "-"
+    printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  95th pct latency ms" "${R_IO_P95:-0}" "-" "-"
     say "  ${C_DIM}file I/O is reported but never enters the composite${C_RESET}"
+    if [ "$IO_CACHED" -eq 1 ]; then
+      say "  ${C_WARN}the I/O figures went through the page cache: O_DIRECT was not available${C_RESET}"
+    fi
   fi
 
   if [ "$TIME_PER_TEST" -lt 10 ]; then

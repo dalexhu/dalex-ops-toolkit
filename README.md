@@ -7,7 +7,7 @@
 |---|---|---|
 | [`tz/`](tz/) | [`tzcheck.sh`](tz/tzcheck.sh), [`tzcheck.ps1`](tz/tzcheck.ps1) | Which tz database does each host carry, and what will a zone actually do this autumn? |
 | [`jdk/`](jdk/) | [`jdkcheck.sh`](jdk/jdkcheck.sh) | Which JDKs are installed, which are actually running, and what tz database each one bundles? |
-| [`bench/`](bench/) | [`perfcheck.sh`](bench/perfcheck.sh) | How does this server perform, sized to its own cores and quota, as one composite score? |
+| [`bench/`](bench/) | [`perfcheck.sh`](bench/perfcheck.sh) | How does this machine perform on CPU, memory and disk, sized to its own cores and quota, as one composite score? |
 
 Each directory has its own README with usage, options and sample output:
 [tz/README.md](tz/README.md) · [jdk/README.md](jdk/README.md) · [bench/README.md](bench/README.md)
