@@ -223,6 +223,10 @@ With `--remote`, the same identity is what the fleet summary is keyed on:
   direct one.
 - Exit status: 0 measured, 1 a host was unreachable or too busy, 2 a test failed or a dependency
   or argument was wrong.
+- The tests run one after another, never in parallel, and `--remote` walks its targets one at a
+  time for the same reason. A lock file stops two invocations on the same host from overlapping.
+  What none of that can see is a second guest on the same physical host: measure co-located VMs
+  one at a time, or they will measure each other.
 - The busy guard exists because a benchmark on a busy host measures the other workload too. It
   samples actual CPU utilisation rather than the load average: on macOS the load average counts
   threads waiting on I/O and Mach ports, so an idle Mac reports a load of 8 while the CPU is 85%
@@ -388,6 +392,9 @@ PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
   `test_file.N`,目录中原有文件也不会被动。正常退出、被中断、失败时该目录都会删除。
 - 走了 page cache 的 I/O 结果(无 O_DIRECT)只报告不打分:它和 direct 的结果不在同一标尺上。
 - 退出码:0 测完,1 有主机不可达或太忙,2 有测试失败、依赖缺失或参数错误。
+- 各项测试**串行**执行,不并行;`--remote` 也是一台一台走,原因相同。另有锁文件防止同一台机器上
+  两次调用重叠。这些都看不见的是**同一物理机上的另一台虚拟机** —— 同宿主的多个 guest 请逐台测,
+  否则它们量的是彼此。
 - 繁忙守卫的存在是因为:在繁忙机器上跑基准,量到的有一部分是别的负载。它采样的是**实际 CPU
   占用率**而非负载均值:macOS 的负载均值把等待 I/O 和 Mach 端口的线程也算进去,一台空闲的 Mac
   会报负载 8 而 CPU 其实 85% 空闲;而在容器里 `/proc/stat` 报的是宿主机的 CPU 而不是 cgroup 的。
