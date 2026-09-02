@@ -74,7 +74,7 @@ machine. The same run scored 83.8 before the quota was taken into account and 99
 | | sequential read, 1 MiB blocks | MiB/s |
 | | random write, 4 KiB blocks — about access latency rather than bandwidth | MiB/s |
 | **Scheduler** | threads, 4× oversubscribed, `--thread-yields=1000 --thread-locks=8` | events/s, derived from the total event count — this test prints no rate of its own |
-| | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s |
+| | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s **per thread** |
 | **Disk** (opt-in) | sequential read | MiB/s |
 | | random read/write, non-durable | IOPS, MiB/s, 95th percentile latency |
 | | sequential write | MiB/s |
@@ -85,6 +85,35 @@ Not covered: network, GPU, NUMA locality, and any storage other than the filesys
 The memory subscore is the geometric mean of the sequential read and write figures. The random
 4 KiB number is reported next to them because it says something different, not because it
 averages well with them.
+
+#### What the mutex test measures, and why it is per thread
+
+sysbench creates 4096 mutexes and has every thread take `--mutex-locks` of them in turn, spinning
+`--mutex-loops` empty iterations between locks. It is not a measure of arithmetic speed: what it
+exercises is the cost of an atomic operation and a futex, and how the scheduler behaves when
+threads collide.
+
+The rate is reported **per thread**, because sysbench takes that lock count from *every* thread:
+the total grows with the thread count, so a machine with many slow cores would score well on it
+for the same reason it scores well on cpu-all — which is already measured on purpose, at a
+weight of 30%.
+
+The fleet this was calibrated against makes the difference concrete. Two guests on the same
+physical host, same processor, different vCPU counts:
+
+| host | vCPU | total locks/s | score before | per thread | score now |
+|---|---|---|---|---|---|
+| db, 6 vCPU | 6 | 1 679 731 | 36.5 | 279 955 | **48.7** |
+| app, 4 vCPU | 4 | 1 120 448 | 24.4 | 280 112 | **48.7** |
+
+Identical hardware now scores identically. Before the change the wider guest looked 50% better
+purely for having two more vCPUs. A 24-vCPU Xeon in the same fleet moved from 125.8 — above the
+reference machine, on hardware that scores 7.3 on single-thread CPU — down to 41.9, in line with
+its other subscores.
+
+The mutex figure is still the least repeatable of the five: two runs on the same idle host came
+out 25% apart while the other four stayed within 2%. At a weight of 10% that moves a composite
+by about 2 points.
 
 Two things about the disk tests are deliberate. They pass `--file-extra-flags=direct` so the
 page cache does not answer the requests, falling back per test where O_DIRECT is unavailable
@@ -122,7 +151,7 @@ was used. Storage varies far more than the rest of a machine and would drown eve
 
 ### The reference profile
 
-`reference profile v2` is rounded from three runs on two Mac mini (Apple silicon) hosts, each
+`reference profile v3` is rounded from three runs on two Mac mini (Apple silicon) hosts, each
 running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds per test:
 
 | test | reference | spread across the three runs |
@@ -131,7 +160,7 @@ running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds 
 | cpu, single thread | 5 500 events/s | 5 534 – 5 564 |
 | memory | 175 000 MiB/s | 170 305 – 177 842 |
 | threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+| mutex | 575 000 locks/s per thread | 568 182 – 581 395 |
 
 The two hosts are consistent with each other: their all-threads figures landed within 0.04% of
 one another (23 809 and 23 800), and single-thread, memory, threads and mutex all repeated
@@ -148,7 +177,7 @@ The profile was measured at 10 seconds per test, and a later run on the same mac
 | cpu, single thread | 5 500 | 5 618 | 102.2 |
 | memory | 175 000 | 178 435 | 102.0 |
 | threads | 11 500 | 11 492 | 99.9 |
-| mutex | 4 600 000 | 4 640 371 | 100.9 |
+| mutex | 575 000 (per thread) | 580 046 | 100.9 |
 | **composite** | | | **101.0** |
 
 So on an idle machine the figures do not depend on how long the test runs, memory included.
@@ -309,7 +338,7 @@ bash perfcheck.sh --remote app1,app2,db1
 | | 顺序读,1 MiB 块 | MiB/s |
 | | 随机写,4 KiB 块 —— 反映的是访问延迟而非带宽 | MiB/s |
 | **调度** | threads,4 倍超订,`--thread-yields=1000 --thread-locks=8` | events/s,由总事件数换算 —— 这项测试本身不输出速率 |
-| | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s |
+| | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s(**每线程**) |
 | **磁盘**(需 `--io`) | 顺序读 | MiB/s |
 | | 随机读写(非持久化) | IOPS、MiB/s、95 分位延迟 |
 | | 顺序写 | MiB/s |
@@ -318,6 +347,29 @@ bash perfcheck.sh --remote app1,app2,db1
 
 内存子分取顺序读与顺序写的几何平均。随机 4 KiB 那个数字列在旁边,是因为它说明的是另一回事,
 不是因为它适合和前两者平均。
+
+#### mutex 测的是什么,以及为什么按线程归一
+
+sysbench 建 4096 个互斥锁,每个线程轮流对它们做 `--mutex-locks` 次加锁,两次加锁之间空转
+`--mutex-loops` 圈。它量的**不是算力**:考察的是一次原子操作与 futex 的开销,以及线程相撞时
+调度器的表现。
+
+速率按**每线程**报告,因为 sysbench 的那个加锁次数是**每个线程各做一遍**的:总量随线程数增长,
+于是"核多但核慢"的机器会在这项上得高分 —— 而那件事 cpu-all 已经在专门衡量了,权重 30%。
+
+用来校准的这批机器把差别显示得很清楚。同一台物理机上的两个 guest,同款 CPU,vCPU 数不同:
+
+| 主机 | vCPU | 总 locks/s | 改前得分 | 每线程 | 现在得分 |
+|---|---|---|---|---|---|
+| db,6 vCPU | 6 | 1 679 731 | 36.5 | 279 955 | **48.7** |
+| app,4 vCPU | 4 | 1 120 448 | 24.4 | 280 112 | **48.7** |
+
+同样的硬件现在得同样的分。改之前,vCPU 多两个的那台仅凭这一点就"好 50%"。同一批里一台
+24 vCPU 的 Xeon 从 125.8 分(**高于基准机**,而它单线程 CPU 只有 7.3 分)降到 41.9,
+与它其余子分终于对得上了。
+
+mutex 仍然是五项里复现性最差的:同一台空闲机器两次运行相差 25%,而其余四项都在 2% 以内。
+按 10% 权重算,大约影响综合分 2 分。
 
 磁盘测试有两处是刻意为之。一是加了 `--file-extra-flags=direct`,不让 page cache 代答请求;
 在 O_DIRECT 不可用的地方(tmpfs、部分 overlay 与网络挂载、macOS)按测试项各自回退并明确说明。
@@ -349,7 +401,7 @@ mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不�
 
 ### 参考基准是怎么来的
 
-`reference profile v2` 取自两台 Mac mini(Apple 芯片)上的三次运行取整 —— 均为 Parallels 中的
+`reference profile v3` 取自两台 Mac mini(Apple 芯片)上的三次运行取整 —— 均为 Parallels 中的
 Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 
 | 测试 | 参考值 | 三次运行的区间 |
@@ -358,7 +410,7 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 | cpu 单线程 | 5 500 events/s | 5 534 – 5 564 |
 | 内存 | 175 000 MiB/s | 170 305 – 177 842 |
 | threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+| mutex | 575 000 locks/s per thread | 568 182 – 581 395 |
 
 两台机器彼此一致:全线程结果相差 **0.04%**(23 809 与 23 800),单线程、内存、threads、mutex
 三次之间也都复现在 2% 以内。第三次运行只有全线程一项低了 12%,其余各项没变 —— 这是那一分钟里
@@ -372,7 +424,7 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 | cpu 单线程 | 5 500 | 5 618 | 102.2 |
 | 内存 | 175 000 | 178 435 | 102.0 |
 | threads | 11 500 | 11 492 | 99.9 |
-| mutex | 4 600 000 | 4 640 371 | 100.9 |
+| mutex | 575 000 (per thread) | 580 046 | 100.9 |
 | **综合** | | | **101.0** |
 
 也就是说:**机器空闲时,各项结果与测试时长无关,内存也一样。**

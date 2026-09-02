@@ -205,11 +205,11 @@ fpct()  { awk -v a="$1" -v b="$2" 'BEGIN{ if (b+0==0) print "0"; else printf "%.
 # Any of these can be overridden from the environment, which is how you move the
 # scale onto a machine of your own:
 #   PERFCHECK_REF_CPU_MULTI=45000 ./perfcheck.sh
-REF_PROFILE="v2 (Mac mini, 8 vCPU Parallels VM, Debian 13 aarch64)"
+REF_PROFILE="v3 (Mac mini, 8 vCPU Parallels VM, Debian 13 aarch64)"
 REF_CPU_MULTI="${PERFCHECK_REF_CPU_MULTI:-24000}"      # events/s, all threads
 REF_CPU_SINGLE="${PERFCHECK_REF_CPU_SINGLE:-5500}"     # events/s, one thread
 REF_THREADS="${PERFCHECK_REF_THREADS:-11500}"          # events/s, scheduler test
-REF_MUTEX="${PERFCHECK_REF_MUTEX:-4600000}"            # mutex locks/s
+REF_MUTEX="${PERFCHECK_REF_MUTEX:-575000}"             # mutex locks/s per thread
 # Confirmed at the 60s default on the same machine: 178435 MiB/s against the
 # 175000 taken from the 10s runs, 2% apart.
 REF_MEMORY="${PERFCHECK_REF_MEMORY:-175000}"           # MiB/s, 1M blocks
@@ -235,7 +235,7 @@ is never part of it.
   cpu, single thread  ${REF_CPU_SINGLE} events/s           ${W_CPU_SINGLE}%      PERFCHECK_REF_CPU_SINGLE
   memory              ${REF_MEMORY} MiB/s             ${W_MEMORY}%      PERFCHECK_REF_MEMORY
   threads             ${REF_THREADS} events/s          ${W_THREADS}%      PERFCHECK_REF_THREADS
-  mutex               ${REF_MUTEX} locks/s         ${W_MUTEX}%      PERFCHECK_REF_MUTEX
+  mutex               ${REF_MUTEX} locks/s/thread    ${W_MUTEX}%      PERFCHECK_REF_MUTEX
   file I/O            ${REF_IO_IOPS} IOPS               -       PERFCHECK_REF_IO_IOPS
 
 The figures come from two Mac minis that agreed within 2% of each other, and a
@@ -642,8 +642,11 @@ run_mutex() {
   fi
   secs="$(echo "$out" | sed -n 's/^ *total time: *\([0-9.]*\)s.*/\1/p' | head -1)"
   if is_num "$secs" && awk -v s="$secs" 'BEGIN{exit !(s+0 > 0)}'; then
-    R_MUTEX="$(awk -v t="$CPU_THREADS" -v l="$locks" -v s="$secs" 'BEGIN{printf "%.0f", (t*l)/s}')"
-    kv "$CPU_THREADS threads" "$R_MUTEX locks/s  (${secs}s for $((CPU_THREADS * locks)) locks)"
+    # per thread, not in total. sysbench takes --mutex-locks from every thread, so
+    # the total rate grows with the thread count and would reward a machine for
+    # having many slow cores - which cpu-all already measures on purpose.
+    R_MUTEX="$(awk -v l="$locks" -v s="$secs" 'BEGIN{printf "%.0f", l/s}')"
+    kv "$CPU_THREADS threads" "$R_MUTEX locks/s per thread  (${secs}s for $((CPU_THREADS * locks)) locks)"
   else
     R_MUTEX="$(metric_or_error mutex "")"
     kv "$CPU_THREADS threads" "ERROR"
@@ -828,7 +831,7 @@ report_scores() {
   printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq write / read" "${R_MEM_WRITE:-0} / ${R_MEM_READ:-0}" "-" "-"
   printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  random 4K write" "${R_MEM_RND:-0}" "-" "-"
   printf "  %-24s %12s %12s %6s\n" "threads events/s" "${R_THREADS:-0}"    "$REF_THREADS"    "$S_THREADS"
-  printf "  %-24s %12s %12s %6s\n" "mutex locks/s"    "${R_MUTEX:-0}"      "$REF_MUTEX"      "$S_MUTEX"
+  printf "  %-24s %12s %12s %6s\n" "mutex locks/s/thread" "${R_MUTEX:-0}"  "$REF_MUTEX"      "$S_MUTEX"
   if [ "$DO_IO" -eq 1 ]; then
     printf "  %-24s %12s %12s %6s\n" "file I/O IOPS"  "${R_IO_IOPS:-0}"    "$REF_IO_IOPS"    "$S_IO"
     printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq read / write MiB/s" "${R_IO_SEQ_READ:-0} / ${R_IO_SEQ_WRITE:-0}" "-" "-"
