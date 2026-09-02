@@ -74,7 +74,7 @@ machine. The same run scored 83.8 before the quota was taken into account and 99
 | | sequential read, 1 MiB blocks | MiB/s |
 | | random write, 4 KiB blocks — about access latency rather than bandwidth | MiB/s |
 | **Scheduler** | threads, 4× oversubscribed, `--thread-yields=1000 --thread-locks=8` | events/s, derived from the total event count — this test prints no rate of its own |
-| | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s **per thread** |
+| | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s, all threads **and** per thread |
 | **Disk** (opt-in) | sequential read | MiB/s |
 | | random read/write, non-durable | IOPS, MiB/s, 95th percentile latency |
 | | sequential write | MiB/s |
@@ -93,10 +93,12 @@ sysbench creates 4096 mutexes and has every thread take `--mutex-locks` of them 
 exercises is the cost of an atomic operation and a futex, and how the scheduler behaves when
 threads collide.
 
-The rate is reported **per thread**, because sysbench takes that lock count from *every* thread:
-the total grows with the thread count, so a machine with many slow cores would score well on it
-for the same reason it scores well on cpu-all — which is already measured on purpose, at a
-weight of 30%.
+The rate is reported **twice**, the same way CPU is: once across all threads and once per
+thread. sysbench takes that lock count from *every* thread, so the total says how much lock
+traffic the whole machine can sustain, while the per-thread figure says how good one of its
+cores is at it. Reporting only the total would let a machine with many slow cores score well for
+the same reason it scores well on cpu-all; reporting only the per-thread figure would lose the
+machine's total capacity. Each carries 5% of the composite.
 
 The fleet this was calibrated against makes the difference concrete. Two guests on the same
 physical host, same processor, different vCPU counts:
@@ -137,7 +139,8 @@ reference". `--help-scoring` prints the whole profile. The composite is a **weig
 | cpu, single thread | 25% |
 | memory | 20% |
 | threads | 15% |
-| mutex | 10% |
+| mutex, all threads | 5% |
+| mutex, per thread | 5% |
 
 A geometric mean is the right average for ratios, and unlike an arithmetic mean it does not let
 one enormous subscore carry the composite on its own.
@@ -160,7 +163,8 @@ running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds 
 | cpu, single thread | 5 500 events/s | 5 534 – 5 564 |
 | memory | 175 000 MiB/s | 170 305 – 177 842 |
 | threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex | 575 000 locks/s per thread | 568 182 – 581 395 |
+| mutex, all threads | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+| mutex, per thread | 575 000 locks/s | 568 182 – 581 395 |
 
 The two hosts are consistent with each other: their all-threads figures landed within 0.04% of
 one another (23 809 and 23 800), and single-thread, memory, threads and mutex all repeated
@@ -177,7 +181,8 @@ The profile was measured at 10 seconds per test, and a later run on the same mac
 | cpu, single thread | 5 500 | 5 618 | 102.2 |
 | memory | 175 000 | 178 435 | 102.0 |
 | threads | 11 500 | 11 492 | 99.9 |
-| mutex | 575 000 (per thread) | 580 046 | 100.9 |
+| mutex, all threads | 4 600 000 | 4 640 371 | 100.9 |
+| mutex, per thread | 575 000 | 580 046 | 100.9 |
 | **composite** | | | **101.0** |
 
 So on an idle machine the figures do not depend on how long the test runs, memory included.
@@ -338,7 +343,7 @@ bash perfcheck.sh --remote app1,app2,db1
 | | 顺序读,1 MiB 块 | MiB/s |
 | | 随机写,4 KiB 块 —— 反映的是访问延迟而非带宽 | MiB/s |
 | **调度** | threads,4 倍超订,`--thread-yields=1000 --thread-locks=8` | events/s,由总事件数换算 —— 这项测试本身不输出速率 |
-| | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s(**每线程**) |
+| | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s,**全线程**与**每线程**各一 |
 | **磁盘**(需 `--io`) | 顺序读 | MiB/s |
 | | 随机读写(非持久化) | IOPS、MiB/s、95 分位延迟 |
 | | 顺序写 | MiB/s |
@@ -354,8 +359,10 @@ sysbench 建 4096 个互斥锁,每个线程轮流对它们做 `--mutex-locks` �
 `--mutex-loops` 圈。它量的**不是算力**:考察的是一次原子操作与 futex 的开销,以及线程相撞时
 调度器的表现。
 
-速率按**每线程**报告,因为 sysbench 的那个加锁次数是**每个线程各做一遍**的:总量随线程数增长,
-于是"核多但核慢"的机器会在这项上得高分 —— 而那件事 cpu-all 已经在专门衡量了,权重 30%。
+速率**报两个数**,和 CPU 的处理方式一致:一个是全线程总量,一个是每线程。sysbench 的加锁次数是
+**每个线程各做一遍**的,所以总量说明整机能承受多大的锁流量,每线程说明它单个核心干这件事有多强。
+只报总量,"核多但核慢"的机器会凭线程数拿高分 —— 那件事 cpu-all 已经在专门衡量;只报每线程,
+则会丢掉整机容量这一面。两者各占综合分的 5%。
 
 用来校准的这批机器把差别显示得很清楚。同一台物理机上的两个 guest,同款 CPU,vCPU 数不同:
 
@@ -389,7 +396,8 @@ mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不�
 | cpu 单线程 | 25% |
 | 内存 | 20% |
 | 线程 | 15% |
-| 互斥锁 | 10% |
+| 互斥锁,全线程 | 5% |
+| 互斥锁,每线程 | 5% |
 
 比值型数据本就该用几何平均;而且与算术平均不同,单独一项畸高的子分不会把综合分整个抬起来。
 
@@ -410,7 +418,8 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 | cpu 单线程 | 5 500 events/s | 5 534 – 5 564 |
 | 内存 | 175 000 MiB/s | 170 305 – 177 842 |
 | threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex | 575 000 locks/s per thread | 568 182 – 581 395 |
+| mutex, all threads | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+| mutex, per thread | 575 000 locks/s | 568 182 – 581 395 |
 
 两台机器彼此一致:全线程结果相差 **0.04%**(23 809 与 23 800),单线程、内存、threads、mutex
 三次之间也都复现在 2% 以内。第三次运行只有全线程一项低了 12%,其余各项没变 —— 这是那一分钟里
@@ -424,7 +433,8 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 | cpu 单线程 | 5 500 | 5 618 | 102.2 |
 | 内存 | 175 000 | 178 435 | 102.0 |
 | threads | 11 500 | 11 492 | 99.9 |
-| mutex | 575 000 (per thread) | 580 046 | 100.9 |
+| mutex, all threads | 4 600 000 | 4 640 371 | 100.9 |
+| mutex, per thread | 575 000 | 580 046 | 100.9 |
 | **综合** | | | **101.0** |
 
 也就是说:**机器空闲时,各项结果与测试时长无关,内存也一样。**
