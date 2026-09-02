@@ -197,14 +197,24 @@ fpct()  { awk -v a="$1" -v b="$2" 'BEGIN{ if (b+0==0) print "0"; else printf "%.
 # as the reference on a test scores 200 on it. Change them and every score moves,
 # so leave them alone if you want scores to stay comparable between runs.
 # ---------------------------------------------------------------------------
-# Any of these can be overridden from the environment, which is how you calibrate
-# the scale to a machine of your own:
+# Reference profile v2, rounded from two Mac mini (Apple silicon) hosts running
+# Debian 13 aarch64 in Parallels with 8 vCPU each, sysbench 1.0.20. The pair
+# agreed within 0.5% on CPU, 1% on threads and 2% on mutex and memory, which is
+# what makes them usable as a fixed point.
+#
+# Any of these can be overridden from the environment, which is how you move the
+# scale onto a machine of your own:
 #   PERFCHECK_REF_CPU_MULTI=45000 ./perfcheck.sh
-REF_CPU_MULTI="${PERFCHECK_REF_CPU_MULTI:-20000}"      # events/s, all threads
-REF_CPU_SINGLE="${PERFCHECK_REF_CPU_SINGLE:-5000}"     # events/s, one thread
-REF_MEMORY="${PERFCHECK_REF_MEMORY:-40000}"            # MiB/s, 1M blocks
-REF_THREADS="${PERFCHECK_REF_THREADS:-15000}"          # events/s, scheduler test
-REF_MUTEX="${PERFCHECK_REF_MUTEX:-2500000}"            # mutex locks/s
+REF_PROFILE="v2 (Mac mini, 8 vCPU Parallels VM, Debian 13 aarch64)"
+REF_CPU_MULTI="${PERFCHECK_REF_CPU_MULTI:-24000}"      # events/s, all threads
+REF_CPU_SINGLE="${PERFCHECK_REF_CPU_SINGLE:-5500}"     # events/s, one thread
+REF_THREADS="${PERFCHECK_REF_THREADS:-11500}"          # events/s, scheduler test
+REF_MUTEX="${PERFCHECK_REF_MUTEX:-4600000}"            # mutex locks/s
+# Measured at 10s per test. The memory figure falls as the run lengthens - short
+# runs stay inside cache - so this one is the least settled of the five and is
+# worth re-measuring at the 60s default.
+REF_MEMORY="${PERFCHECK_REF_MEMORY:-175000}"           # MiB/s, 1M blocks
+# Not measured on the reference machine; the I/O test was not run there.
 REF_IO_IOPS="${PERFCHECK_REF_IO_IOPS:-3000}"           # random read+write ops/s
 
 W_CPU_MULTI=30
@@ -215,7 +225,7 @@ W_MUTEX=10
 
 if [ "$HELP_SCORING" -eq 1 ]; then
   cat <<SCORING
-perfcheck relative score v1
+perfcheck relative score, reference profile ${REF_PROFILE}
 
 Each result is divided by the reference value below, so 100 means the same as the
 reference. The composite is the weighted geometric mean of the five, and file I/O
@@ -228,6 +238,11 @@ is never part of it.
   threads             ${REF_THREADS} events/s          ${W_THREADS}%      PERFCHECK_REF_THREADS
   mutex               ${REF_MUTEX} locks/s         ${W_MUTEX}%      PERFCHECK_REF_MUTEX
   file I/O            ${REF_IO_IOPS} IOPS               -       PERFCHECK_REF_IO_IOPS
+
+The four CPU, threads and mutex figures come from two Mac minis that agreed
+within 2% of each other. The memory figure was taken from a 10 second run and
+falls as the run lengthens, so it is the least settled of the five. The file I/O
+figure was not measured on that machine at all.
 
 The reference numbers are arbitrary and only decide where 100 sits. A score is a
 comparison with that profile and with other hosts measured the same way; it is
@@ -806,7 +821,7 @@ score_all() {
 }
 
 report_scores() {
-  head2 "Scores (perfcheck relative score v1: 100 = the reference profile below)"
+  head2 "Scores (perfcheck relative score, reference profile $REF_PROFILE)"
   [ "$QUIET" -eq 1 ] && return 0
   printf "  ${C_KEY}%-24s %12s %12s %6s${C_RESET}\n" "TEST" "MEASURED" "REFERENCE" "SCORE"
   printf "  %-24s %12s %12s %6s\n" "cpu, all cores"   "${R_CPU_MULTI:-0}"  "$REF_CPU_MULTI"  "$S_CPU_MULTI"
