@@ -120,8 +120,34 @@ score, which is the wrong direction entirely.
 **File I/O never enters the composite**, so a score means the same thing whether or not `--io`
 was used. Storage varies far more than the rest of a machine and would drown everything else.
 
-The reference numbers are arbitrary — they only decide where 100 sits. Every one of them can be
-overridden, which is how to calibrate the scale against a machine of your own:
+### The reference profile
+
+`reference profile v2` is rounded from three runs on two Mac mini (Apple silicon) hosts, each
+running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds per test:
+
+| test | reference | spread across the three runs |
+|---|---|---|
+| cpu, all threads | 24 000 events/s | 21 017 – 23 809 |
+| cpu, single thread | 5 500 events/s | 5 534 – 5 564 |
+| memory | 175 000 MiB/s | 170 305 – 177 842 |
+| threads | 11 500 events/s | 10 771 – 11 470 |
+| mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+
+Single-thread, memory, threads and mutex repeated within about 2%. The all-threads figure moved
+12% between two runs on the same host, which is the one number to treat with suspicion when
+comparing machines that are close to each other.
+
+Two caveats worth knowing before reading a score:
+
+- The profile was measured at 10 seconds per test while the default is now 60. The memory test
+  is the one that cares: a longer run leaves cache and the figure drops. Measured in a
+  4-core container, the median went from 78 901 MiB/s at 3 s to 55 922 MiB/s at 10 s, with the
+  coefficient of variation rising from 8.2% to 14.4% — while CPU stayed at 0.3–0.5%. The memory
+  reference is the least settled of the five for that reason.
+- The file I/O reference was never measured on that machine; the I/O test was not run there.
+
+The numbers are arbitrary in the sense that they only decide where 100 sits. Every one of them
+can be overridden, which is how to move the scale onto a machine of your own:
 
 ```bash
 PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
@@ -295,8 +321,31 @@ mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不�
 **文件 I/O 永远不进综合分**,所以跑没跑 `--io`,分数含义都一样。存储的离散度远大于机器其余部分,
 放进去会把其他项淹没。
 
-参考值是任意选定的 —— 它们只决定 100 分落在哪里。每一项都可以覆盖,
-这也是把标尺校准到你自己某台基准机的方式:
+### 参考基准是怎么来的
+
+`reference profile v2` 取自两台 Mac mini(Apple 芯片)上的三次运行取整 —— 均为 Parallels 中的
+Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
+
+| 测试 | 参考值 | 三次运行的区间 |
+|---|---|---|
+| cpu 全线程 | 24 000 events/s | 21 017 – 23 809 |
+| cpu 单线程 | 5 500 events/s | 5 534 – 5 564 |
+| 内存 | 175 000 MiB/s | 170 305 – 177 842 |
+| threads | 11 500 events/s | 10 771 – 11 470 |
+| mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
+
+单线程、内存、threads、mutex 三次之间复现在 2% 以内。**全线程那项在同一台机器上两次相差 12%**,
+比较两台接近的机器时,这个数字最需要保留怀疑。
+
+读分数之前有两点要清楚:
+
+- 基准是在**每项 10 秒**下测的,而现在默认是 60 秒。受影响的是内存测试:跑得越久越会跑出缓存,
+  数字随之下降。在一个 4 核容器里实测,中位数从 3 秒的 78 901 MiB/s 降到 10 秒的 55 922 MiB/s,
+  变异系数从 8.2% 升到 14.4% —— 同期 CPU 只有 0.3–0.5%。所以五项里内存这项最不稳。
+- 文件 I/O 的参考值**不是**在那台机器上测的,那里没跑 I/O 测试。
+
+说参考值"任意",意思是它们只决定 100 分落在哪里。每一项都可以覆盖,
+这也是把标尺移到你自己某台基准机上的方式:
 
 ```bash
 PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
