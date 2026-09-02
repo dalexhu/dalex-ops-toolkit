@@ -930,6 +930,24 @@ $line"
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+# The tests run one after another on purpose - two of them at once would measure
+# each other. This lock extends that to separate invocations on the same host.
+PERFCHECK_LOCK="${TMPDIR:-/tmp}/perfcheck.lock"
+if ( set -o noclobber; echo "$$" > "$PERFCHECK_LOCK" ) 2>/dev/null; then
+  trap 'rm -f "$PERFCHECK_LOCK"; cleanup_all' EXIT
+else
+  other="$(cat "$PERFCHECK_LOCK" 2>/dev/null)"
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    printf "${C_ERR}another perfcheck is running on this host${C_RESET} (pid %s).\n" "$other" >&2
+    printf "benchmarks measure each other when they overlap; wait for it to finish.\n" >&2
+    exit 1
+  fi
+  # the holder is gone, so the lock is stale
+  rm -f "$PERFCHECK_LOCK"
+  echo "$$" > "$PERFCHECK_LOCK"
+  trap 'rm -f "$PERFCHECK_LOCK"; cleanup_all' EXIT
+fi
+
 LOCAL_RC=0
 detect_machine
 collect_identity
