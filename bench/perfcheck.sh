@@ -209,6 +209,7 @@ REF_PROFILE="v3 (Mac mini, 8 vCPU Parallels VM, Debian 13 aarch64)"
 REF_CPU_MULTI="${PERFCHECK_REF_CPU_MULTI:-24000}"      # events/s, all threads
 REF_CPU_SINGLE="${PERFCHECK_REF_CPU_SINGLE:-5500}"     # events/s, one thread
 REF_THREADS="${PERFCHECK_REF_THREADS:-11500}"          # events/s, scheduler test
+REF_MUTEX_TOTAL="${PERFCHECK_REF_MUTEX_TOTAL:-4600000}" # mutex locks/s, all threads
 REF_MUTEX="${PERFCHECK_REF_MUTEX:-575000}"             # mutex locks/s per thread
 # Confirmed at the 60s default on the same machine: 178435 MiB/s against the
 # 175000 taken from the 10s runs, 2% apart.
@@ -220,7 +221,8 @@ W_CPU_MULTI=30
 W_CPU_SINGLE=25
 W_MEMORY=20
 W_THREADS=15
-W_MUTEX=10
+W_MUTEX_TOTAL=5
+W_MUTEX=5
 
 if [ "$HELP_SCORING" -eq 1 ]; then
   cat <<SCORING
@@ -235,7 +237,8 @@ is never part of it.
   cpu, single thread  ${REF_CPU_SINGLE} events/s           ${W_CPU_SINGLE}%      PERFCHECK_REF_CPU_SINGLE
   memory              ${REF_MEMORY} MiB/s             ${W_MEMORY}%      PERFCHECK_REF_MEMORY
   threads             ${REF_THREADS} events/s          ${W_THREADS}%      PERFCHECK_REF_THREADS
-  mutex               ${REF_MUTEX} locks/s/thread    ${W_MUTEX}%      PERFCHECK_REF_MUTEX
+  mutex, all threads  ${REF_MUTEX_TOTAL} locks/s         ${W_MUTEX_TOTAL}%       PERFCHECK_REF_MUTEX_TOTAL
+  mutex, per thread   ${REF_MUTEX} locks/s          ${W_MUTEX}%       PERFCHECK_REF_MUTEX
   file I/O            ${REF_IO_IOPS} IOPS               -       PERFCHECK_REF_IO_IOPS
 
 The figures come from two Mac minis that agreed within 2% of each other, and a
@@ -550,7 +553,7 @@ check_idle() {
 # the tests - every parameter is derived from the machine
 # ---------------------------------------------------------------------------
 R_CPU_MULTI=0; R_CPU_SINGLE=0; R_THREADS=0; R_MUTEX=0
-R_MEM_WRITE=0; R_MEM_READ=0; R_MEM_RND=0; R_MEMORY=0
+R_MEM_WRITE=0; R_MEM_READ=0; R_MEM_RND=0; R_MEMORY=0; R_MUTEX_TOTAL=0
 R_IO_SEQ_READ=0; R_IO_SEQ_WRITE=0
 R_IO_IOPS=0; R_IO_READ=0; R_IO_WRITE=0; R_IO_P95=0
 
@@ -638,7 +641,7 @@ run_mutex() {
   locks=50000
   if ! out="$(run_sysbench mutex sysbench mutex --threads="$CPU_THREADS" --mutex-num=4096 \
                --mutex-locks="$locks" --mutex-loops=5000 run)"; then
-    R_MUTEX="ERROR"; kv "$CPU_THREADS threads" "ERROR"; return 0
+    R_MUTEX="ERROR"; R_MUTEX_TOTAL="ERROR"; kv "all threads ($CPU_THREADS)" "ERROR"; return 0
   fi
   secs="$(echo "$out" | sed -n 's/^ *total time: *\([0-9.]*\)s.*/\1/p' | head -1)"
   if is_num "$secs" && awk -v s="$secs" 'BEGIN{exit !(s+0 > 0)}'; then
@@ -646,10 +649,13 @@ run_mutex() {
     # the total rate grows with the thread count and would reward a machine for
     # having many slow cores - which cpu-all already measures on purpose.
     R_MUTEX="$(awk -v l="$locks" -v s="$secs" 'BEGIN{printf "%.0f", l/s}')"
-    kv "$CPU_THREADS threads" "$R_MUTEX locks/s per thread  (${secs}s for $((CPU_THREADS * locks)) locks)"
+    R_MUTEX_TOTAL="$(awk -v t="$CPU_THREADS" -v l="$locks" -v s="$secs" 'BEGIN{printf "%.0f", (t*l)/s}')"
+    kv "all threads ($CPU_THREADS)" "$R_MUTEX_TOTAL locks/s   (${secs}s for $((CPU_THREADS * locks)) locks)"
+    kv "per thread" "$R_MUTEX locks/s"
   else
     R_MUTEX="$(metric_or_error mutex "")"
-    kv "$CPU_THREADS threads" "ERROR"
+    R_MUTEX_TOTAL="ERROR"
+    kv "all threads ($CPU_THREADS)" "ERROR"
   fi
 }
 
@@ -769,7 +775,7 @@ run_io() {
 # ---------------------------------------------------------------------------
 # scoring
 # ---------------------------------------------------------------------------
-S_CPU_MULTI=0; S_CPU_SINGLE=0; S_MEMORY=0; S_THREADS=0; S_MUTEX=0; S_IO=0; COMPOSITE=0
+S_CPU_MULTI=0; S_CPU_SINGLE=0; S_MEMORY=0; S_THREADS=0; S_MUTEX=0; S_MUTEX_TOTAL=0; S_IO=0; COMPOSITE=0
 
 score_one() {  # score_one <measured> <reference>
   if is_num "$1"; then
@@ -784,6 +790,7 @@ score_all() {
   S_CPU_SINGLE="$(score_one "$R_CPU_SINGLE" "$REF_CPU_SINGLE")"
   S_MEMORY="$(score_one "$R_MEMORY" "$REF_MEMORY")"
   S_THREADS="$(score_one "$R_THREADS" "$REF_THREADS")"
+  S_MUTEX_TOTAL="$(score_one "$R_MUTEX_TOTAL" "$REF_MUTEX_TOTAL")"
   S_MUTEX="$(score_one "$R_MUTEX" "$REF_MUTEX")"
   if [ "$DO_IO" -eq 1 ]; then
     if [ "$IO_CACHED" -eq 1 ]; then
@@ -798,18 +805,19 @@ score_all() {
   # would renormalise the rest and could raise the composite, which is exactly
   # the wrong direction.
   if ! is_num "$S_CPU_MULTI" || ! is_num "$S_CPU_SINGLE" || ! is_num "$S_MEMORY" \
-     || ! is_num "$S_THREADS" || ! is_num "$S_MUTEX"; then
+     || ! is_num "$S_THREADS" || ! is_num "$S_MUTEX" || ! is_num "$S_MUTEX_TOTAL"; then
     COMPOSITE="N/A"
     return 0
   fi
 
   # weighted geometric mean - a ratio scale calls for it, and one very high
   # subscore cannot drag the composite up the way an arithmetic mean lets it
-  COMPOSITE="$(awk -v a="$S_CPU_MULTI" -v wa="$W_CPU_MULTI" \
-                   -v b="$S_CPU_SINGLE" -v wb="$W_CPU_SINGLE" \
-                   -v c="$S_MEMORY"     -v wc="$W_MEMORY" \
-                   -v d="$S_THREADS"    -v wd="$W_THREADS" \
-                   -v e="$S_MUTEX"      -v we="$W_MUTEX" '
+  COMPOSITE="$(awk -v a="$S_CPU_MULTI"   -v wa="$W_CPU_MULTI" \
+                   -v b="$S_CPU_SINGLE"  -v wb="$W_CPU_SINGLE" \
+                   -v c="$S_MEMORY"      -v wc="$W_MEMORY" \
+                   -v d="$S_THREADS"     -v wd="$W_THREADS" \
+                   -v e="$S_MUTEX_TOTAL" -v we="$W_MUTEX_TOTAL" \
+                   -v f="$S_MUTEX"       -v wf="$W_MUTEX" '
     BEGIN {
       n = 0; s = 0;
       if (a+0 > 0) { s += wa * log(a); n += wa }
@@ -817,6 +825,7 @@ score_all() {
       if (c+0 > 0) { s += wc * log(c); n += wc }
       if (d+0 > 0) { s += wd * log(d); n += wd }
       if (e+0 > 0) { s += we * log(e); n += we }
+      if (f+0 > 0) { s += wf * log(f); n += wf }
       if (n == 0) { print "0" } else { printf "%.1f", exp(s / n) }
     }')"
 }
@@ -831,7 +840,8 @@ report_scores() {
   printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq write / read" "${R_MEM_WRITE:-0} / ${R_MEM_READ:-0}" "-" "-"
   printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  random 4K write" "${R_MEM_RND:-0}" "-" "-"
   printf "  %-24s %12s %12s %6s\n" "threads events/s" "${R_THREADS:-0}"    "$REF_THREADS"    "$S_THREADS"
-  printf "  %-24s %12s %12s %6s\n" "mutex locks/s/thread" "${R_MUTEX:-0}"  "$REF_MUTEX"      "$S_MUTEX"
+  printf "  %-24s %12s %12s %6s\n" "mutex, all threads" "${R_MUTEX_TOTAL:-0}" "$REF_MUTEX_TOTAL" "$S_MUTEX_TOTAL"
+  printf "  %-24s %12s %12s %6s\n" "mutex, per thread"  "${R_MUTEX:-0}"       "$REF_MUTEX"       "$S_MUTEX"
   if [ "$DO_IO" -eq 1 ]; then
     printf "  %-24s %12s %12s %6s\n" "file I/O IOPS"  "${R_IO_IOPS:-0}"    "$REF_IO_IOPS"    "$S_IO"
     printf "  ${C_DIM}%-24s %12s %12s %6s${C_RESET}\n" "  seq read / write MiB/s" "${R_IO_SEQ_READ:-0} / ${R_IO_SEQ_WRITE:-0}" "-" "-"
@@ -887,8 +897,8 @@ report_composite() {
   printf "  ${C_DIM}%-10s${C_RESET} %s\n" "$inst_label" "$inst_desc"
 
   [ "$QUIET" -eq 1 ] && return 0
-  printf "  ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex %s%%${C_RESET}\n" \
-    "$W_CPU_MULTI" "$W_CPU_SINGLE" "$W_MEMORY" "$W_THREADS" "$W_MUTEX"
+  printf "  ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex-all %s%%, mutex-1 %s%%${C_RESET}\n" \
+    "$W_CPU_MULTI" "$W_CPU_SINGLE" "$W_MEMORY" "$W_THREADS" "$W_MUTEX_TOTAL" "$W_MUTEX"
 }
 
 # ---------------------------------------------------------------------------
@@ -984,7 +994,7 @@ else
   report_composite
 fi
 
-LOCAL_ROW="PERFCHECK-RESULT|$HOST_NAME|${HOST_IP:--}|$CPU_THREADS|${MEM_TOTAL_MB}|$COMPOSITE|$S_CPU_MULTI|$S_CPU_SINGLE|$S_MEMORY|$S_THREADS|$S_MUTEX|${S_IO:-0}"
+LOCAL_ROW="PERFCHECK-RESULT|$HOST_NAME|${HOST_IP:--}|$CPU_THREADS|${MEM_TOTAL_MB}|$COMPOSITE|$S_CPU_MULTI|$S_CPU_SINGLE|$S_MEMORY|$S_THREADS|$S_MUTEX_TOTAL|$S_MUTEX|${S_IO:-0}"
 [ "$EMIT_RESULT" -eq 1 ] && echo "$LOCAL_ROW"
 
 ROWS="$LOCAL_ROW"
