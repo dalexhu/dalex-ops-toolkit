@@ -7,19 +7,22 @@
 |---|---|---|
 | [`tz/`](tz/) | [`tzcheck.sh`](tz/tzcheck.sh), [`tzcheck.ps1`](tz/tzcheck.ps1) | Which tz database does each host carry, and what will a zone actually do this autumn? |
 | [`jdk/`](jdk/) | [`jdkcheck.sh`](jdk/jdkcheck.sh) | Which JDKs are installed, which are actually running, and what tz database each one bundles? |
+| [`bench/`](bench/) | [`perfcheck.sh`](bench/perfcheck.sh) | How does this server perform, sized to its own cores and quota, as one composite score? |
 
 Each directory has its own README with usage, options and sample output:
-[tz/README.md](tz/README.md) · [jdk/README.md](jdk/README.md)
+[tz/README.md](tz/README.md) · [jdk/README.md](jdk/README.md) · [bench/README.md](bench/README.md)
 
 每个目录下都有自己的 README,含用法、选项与示例输出。
 
 ## Requirements / 依赖
 
-`bash` 3.2 or newer with GNU or BSD `date`; PowerShell 5.1 or newer for `tzcheck.ps1`.
+`bash` 3.2 or newer with GNU or BSD `date`; PowerShell 5.1 or newer for `tzcheck.ps1`;
+`sysbench` 1.0 or newer for `perfcheck.sh`, which installs it for you if it is missing.
 Nothing else is required — the scripts have no runtime dependencies and are meant to be run
 straight from a URL or copied onto a host.
 
-`bash` 3.2+(GNU 或 BSD `date`);`tzcheck.ps1` 需要 PowerShell 5.1+。
+`bash` 3.2+(GNU 或 BSD `date`);`tzcheck.ps1` 需要 PowerShell 5.1+;
+`perfcheck.sh` 需要 sysbench 1.0+(缺失时会自动安装)。
 除此之外无其他依赖 —— 脚本没有运行时依赖,可直接从 URL 运行或拷到主机上执行。
 
 ---
