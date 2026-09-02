@@ -377,3 +377,36 @@ Debian 12、Ubuntu 24.04 验证。`tzcheck.ps1` 已在 PowerShell 7.4(Linux 容�
 ## License
 
 MIT
+
+---
+
+## Disclaimer / 免责声明
+
+**English.** These are personal utilities, shared in case they are useful to someone else, and
+provided **as is, without warranty of any kind, express or implied**. The author accepts no
+liability for any loss or damage arising from their use.
+
+They are not affiliated with, endorsed by, sponsored by or supported by IANA, Oracle, the
+Eclipse Foundation, Amazon, Microsoft, Apple, Red Hat, Canonical, the Debian or AlmaLinux
+projects, the maintainers of SDKMAN!, Homebrew, Node.js, Python, MySQL or Docker, or any other
+project or vendor named anywhere in this repository. All product names, logos and trademarks
+are the property of their respective owners, and are used here only to identify the software
+these scripts inspect or operate on.
+
+The scripts read system state, and where asked to, connect to hosts named on the command line
+over ssh and run package-manager commands. What they report reflects the data present on the
+host at the time they run; it is not a certification of correctness of that host or of any
+runtime on it. Nothing in this repository is legal advice.
+
+**中文。** 这些是个人自用工具,公开出来只是想着或许对别人也有用,
+**按原样提供,不附带任何明示或默示的担保**。作者对因使用本项目而产生的任何损失或损害
+不承担责任。
+
+本项目与 IANA、Oracle、Eclipse 基金会、Amazon、Microsoft、Apple、Red Hat、Canonical、
+Debian 与 AlmaLinux 项目、SDKMAN!、Homebrew、Node.js、Python、MySQL、Docker 的维护方,
+以及本仓库中提及的任何其他项目或厂商,**均无关联,未获其背书、赞助或支持**。
+所有产品名称、标识与商标均归其各自所有者所有,在此仅用于指明这些脚本所检查或操作的软件对象。
+
+脚本会读取系统状态,并在被要求时通过 ssh 连接命令行上指定的主机、执行包管理器命令。
+它们报告的是运行当时主机上的数据,不构成对该主机或其上任何运行时的正确性认证。
+本仓库中的任何内容均不构成法律意见。
