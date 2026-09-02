@@ -18,10 +18,11 @@ VERSION="1.0.0"
 
 TIME_PER_TEST=10
 DO_IO=0
-DO_INSTALL=1
+DO_INSTALL=0      # installing packages changes the machine being measured
 FORCE=0
 QUIET=0
 EMIT_RESULT=0
+HELP_SCORING=0
 REMOTE=""
 IO_DIR=""
 BUSY_LIMIT_PCT=25      # refuse to start if the CPU is busier than this
@@ -39,12 +40,15 @@ Options:
                      sized from RAM and free space, and the result reflects the
                      storage rather than the machine
   --io-dir <path>    Directory for the I/O test file (default: current directory)
-  --no-install       Do not try to install sysbench if it is missing
+  --install          Install sysbench when it is missing. Off by default: installing
+                     packages changes the machine and loads it while doing so
+  --no-install       Accepted and ignored; this is now the default
   --force            Run even when the machine is already busy
   --max-busy <pct>   Busy CPU percentage that stops the run (default 25)
   --remote <a[,b,]>  Also run on those ssh targets and print a fleet summary
   -q, --quiet        Print the summary only
   -h, --help         This help
+  --help-scoring     Print the reference profile and the weights
   --version          Show version
 
 Exit codes: 0 ran, 1 a host was unreachable or refused to run, 2 sysbench missing
@@ -57,23 +61,35 @@ comparable whether or not --io was used.
 USAGE
 }
 
+need_value() {  # need_value <flag> <value...>
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    echo "$1 requires a value" >&2
+    exit 2
+  fi
+  case "$2" in
+    -*) echo "$1 requires a value, got the option $2" >&2; exit 2 ;;
+  esac
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --time)       TIME_PER_TEST="${2:-10}"; shift ;;
+    --time)       need_value "$@"; TIME_PER_TEST="$2"; shift ;;
     --time=*)     TIME_PER_TEST="${1#*=}" ;;
     --quick)      TIME_PER_TEST=3 ;;
     --io)         DO_IO=1 ;;
-    --io-dir)     IO_DIR="${2:-}"; DO_IO=1; shift ;;
+    --io-dir)     need_value "$@"; IO_DIR="$2"; DO_IO=1; shift ;;
     --io-dir=*)   IO_DIR="${1#*=}"; DO_IO=1 ;;
+    --install)    DO_INSTALL=1 ;;
     --no-install) DO_INSTALL=0 ;;
     --force)      FORCE=1 ;;
-    --max-busy)   BUSY_LIMIT_PCT="${2:-25}"; shift ;;
+    --max-busy)   need_value "$@"; BUSY_LIMIT_PCT="$2"; shift ;;
     --max-busy=*) BUSY_LIMIT_PCT="${1#*=}" ;;
-    --remote)     REMOTE="${2:-}"; shift ;;
+    --remote)     need_value "$@"; REMOTE="$2"; shift ;;
     --remote=*)   REMOTE="${1#*=}" ;;
     -q|--quiet)   QUIET=1 ;;
     --emit-result) EMIT_RESULT=1 ;;
     -h|--help)    usage; exit 0 ;;
+    --help-scoring) HELP_SCORING=1 ;;
     --version)    echo "perfcheck.sh $VERSION"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -81,8 +97,33 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TIME_PER_TEST" in
-  ''|*[!0-9]*) echo "invalid --time: $TIME_PER_TEST" >&2; exit 2 ;;
+  ''|*[!0-9]*) echo "--time must be a whole number of seconds: $TIME_PER_TEST" >&2; exit 2 ;;
 esac
+if [ "$TIME_PER_TEST" -lt 3 ]; then
+  echo "--time must be at least 3 seconds (shorter runs measure startup)" >&2
+  exit 2
+fi
+case "$BUSY_LIMIT_PCT" in
+  ''|*[!0-9]*) echo "--max-busy must be a whole percentage: $BUSY_LIMIT_PCT" >&2; exit 2 ;;
+esac
+if [ "$BUSY_LIMIT_PCT" -gt 100 ]; then
+  echo "--max-busy must be between 0 and 100: $BUSY_LIMIT_PCT" >&2; exit 2
+fi
+if [ -n "$IO_DIR" ]; then
+  if [ ! -d "$IO_DIR" ] || [ ! -w "$IO_DIR" ]; then
+    echo "--io-dir must be an existing writable directory: $IO_DIR" >&2; exit 2
+  fi
+fi
+if [ -n "$REMOTE" ]; then
+  # a literal newline in the pattern: $(printf '\n') would be stripped to the
+  # empty string, turning the pattern into ** and rejecting everything
+  PERFCHECK_NL='
+'
+  case "$REMOTE" in
+    -*|*' '*|*"$PERFCHECK_NL"*)
+      echo "--remote takes a comma separated list of ssh targets" >&2; exit 2 ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # output helpers
@@ -98,6 +139,50 @@ say()   { [ "$QUIET" -eq 1 ] || printf "%b\n" "$*"; }
 head2() { [ "$QUIET" -eq 1 ] || printf "\n${C_HEAD}%s${C_RESET}\n" "$*"; }
 kv()    { [ "$QUIET" -eq 1 ] || printf "  %-22s %s\n" "$1" "$2"; }
 has()   { command -v "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------------------
+# every sysbench invocation goes through here: a test that fails must not be
+# allowed to look like a result of zero
+# ---------------------------------------------------------------------------
+# Several of these helpers are called inside $( ), which is a subshell, so a
+# plain variable would not survive. The failed tests are recorded in a file.
+TEST_ERR_FILE="$(mktemp 2>/dev/null || echo "/tmp/perfcheck.errs.$$")"
+: > "$TEST_ERR_FILE"
+
+note_error()      { echo "$1" >> "$TEST_ERR_FILE"; }
+has_test_errors() { [ -s "$TEST_ERR_FILE" ]; }
+test_errors()     { sort -u "$TEST_ERR_FILE" 2>/dev/null | tr '\n' ' '; }
+
+run_sysbench() {  # run_sysbench <label> <command...>   -> prints stdout, non-zero on failure
+  local label="$1"; shift
+  local err out rc
+  err="$(mktemp 2>/dev/null || echo "/tmp/perfcheck.err.$$")"
+  out="$("$@" 2>"$err")"
+  rc=$?
+  if [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -q '^FATAL'; then
+    note_error "$label"
+    printf "  ${C_ERR}%s failed${C_RESET} (exit %s)\n" "$label" "$rc" >&2
+    { printf '%s\n' "$out" | grep -E '^(FATAL|ERROR)' | head -3
+      head -3 "$err" 2>/dev/null; } | sed 's/^/    /' >&2
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+  return 0
+}
+
+# a measurement that could not be parsed is an error, never a zero
+metric_or_error() {  # metric_or_error <label> <value>
+  if [ -z "$2" ]; then
+    note_error "$1"
+    echo "ERROR"
+  else
+    echo "$2"
+  fi
+}
+
+is_num() { case "$1" in ''|*[!0-9.]*) return 1 ;; *) return 0 ;; esac; }
 
 # all floating point work goes through awk - bc is not always installed
 fmul()  { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.2f", a*b}'; }
@@ -126,6 +211,29 @@ W_CPU_SINGLE=25
 W_MEMORY=20
 W_THREADS=15
 W_MUTEX=10
+
+if [ "$HELP_SCORING" -eq 1 ]; then
+  cat <<SCORING
+perfcheck relative score v1
+
+Each result is divided by the reference value below, so 100 means the same as the
+reference. The composite is the weighted geometric mean of the five, and file I/O
+is never part of it.
+
+  test                reference            weight   environment override
+  cpu, all threads    ${REF_CPU_MULTI} events/s          ${W_CPU_MULTI}%      PERFCHECK_REF_CPU_MULTI
+  cpu, single thread  ${REF_CPU_SINGLE} events/s           ${W_CPU_SINGLE}%      PERFCHECK_REF_CPU_SINGLE
+  memory              ${REF_MEMORY} MiB/s             ${W_MEMORY}%      PERFCHECK_REF_MEMORY
+  threads             ${REF_THREADS} events/s          ${W_THREADS}%      PERFCHECK_REF_THREADS
+  mutex               ${REF_MUTEX} locks/s         ${W_MUTEX}%      PERFCHECK_REF_MUTEX
+  file I/O            ${REF_IO_IOPS} IOPS               -       PERFCHECK_REF_IO_IOPS
+
+The reference numbers are arbitrary and only decide where 100 sits. A score is a
+comparison with that profile and with other hosts measured the same way; it is
+not a measure of anything on its own.
+SCORING
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # machine facts
@@ -227,6 +335,10 @@ detect_machine() {
   if has lscpu; then
     CPU_MODEL="$(lscpu 2>/dev/null | sed -n 's/^Model name: *//p' | head -1)"
     CPU_SOCKETS="$(lscpu 2>/dev/null | sed -n 's/^Socket(s): *//p' | head -1)"
+    # lscpu prints a bare dash for fields it cannot determine, which happens for
+    # the model name and socket count under emulation and in some guests
+    [ "$CPU_MODEL" = "-" ] && CPU_MODEL=""
+    [ "$CPU_SOCKETS" = "-" ] && CPU_SOCKETS=""
     local cps tps
     cps="$(lscpu 2>/dev/null | sed -n 's/^Core(s) per socket: *//p' | head -1)"
     tps="$(lscpu 2>/dev/null | sed -n 's/^Thread(s) per core: *//p' | head -1)"
@@ -256,10 +368,24 @@ detect_machine() {
   # A container or a systemd slice can cap CPU below the visible core count.
   # nproc does not see that cap, so a benchmark sized from nproc would measure
   # throttling rather than the machine.
-  if [ -r /sys/fs/cgroup/cpu.max ]; then                       # cgroup v2
+  # Under systemd the process sits in a slice, so the limit is not at the root of
+  # the mount. Resolve this process's own path first and walk up from there.
+  local cg_path cg_file=""
+  cg_path="$(sed -n 's/^0::\(.*\)/\1/p' /proc/self/cgroup 2>/dev/null | head -1)"
+  while [ -n "$cg_path" ]; do
+    if [ -r "/sys/fs/cgroup${cg_path}/cpu.max" ]; then
+      cg_file="/sys/fs/cgroup${cg_path}/cpu.max"
+      break
+    fi
+    [ "$cg_path" = "/" ] && break
+    cg_path="$(dirname "$cg_path")"
+  done
+  [ -n "$cg_file" ] || cg_file=/sys/fs/cgroup/cpu.max
+
+  if [ -r "$cg_file" ]; then                                   # cgroup v2
     local q p
-    q="$(awk '{print $1}' /sys/fs/cgroup/cpu.max 2>/dev/null)"
-    p="$(awk '{print $2}' /sys/fs/cgroup/cpu.max 2>/dev/null)"
+    q="$(awk '{print $1}' "$cg_file" 2>/dev/null)"
+    p="$(awk '{print $2}' "$cg_file" 2>/dev/null)"
     if [ "$q" != "max" ] && [ -n "$q" ] && [ -n "$p" ]; then
       CPU_QUOTA="$(awk -v q="$q" -v p="$p" 'BEGIN{printf "%.2f", q/p}')"
     fi
@@ -297,7 +423,13 @@ ensure_sysbench() {
     return 0
   fi
   if [ "$DO_INSTALL" -eq 0 ]; then
-    echo "sysbench is not installed and --no-install was given" >&2
+    printf "${C_ERR}sysbench is not installed.${C_RESET}\n" >&2
+    case "$PKG" in
+      apt)     printf "  sudo apt-get install sysbench\n" >&2 ;;
+      dnf|yum) printf "  sudo %s install epel-release && sudo %s install sysbench\n" "$PKG" "$PKG" >&2 ;;
+      brew)    printf "  brew install sysbench\n" >&2 ;;
+    esac
+    printf "or pass --install to let this script do it, then run it again.\n" >&2
     exit 2
   fi
   head2 "Installing sysbench"
@@ -318,6 +450,7 @@ ensure_sysbench() {
     exit 2
   fi
   say "  installed $(sysbench --version 2>/dev/null)"
+  say "  ${C_WARN}the install just loaded this machine; run again for numbers you intend to keep${C_RESET}"
 }
 
 # Busy percentage, sampled over a second. The load average is not usable for this:
@@ -331,9 +464,11 @@ cpu_busy_pct() {
     a="$(awk '/^usage_usec/{print $2}' /sys/fs/cgroup/cpu.stat)"
     sleep 1
     b="$(awk '/^usage_usec/{print $2}' /sys/fs/cgroup/cpu.stat)"
-    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_THREADS" 'BEGIN{
+    # against the quota itself: rounding 0.5 cores up to one thread would halve
+    # the reported utilisation of a cgroup that is already saturated
+    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_QUOTA" 'BEGIN{
       d = b - a;
-      if (c <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000 * c) }'
+      if (c+0 <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000 * c) }'
     return 0
   fi
   if [ -n "$CPU_QUOTA" ] && [ -r /sys/fs/cgroup/cpuacct/cpuacct.usage ]; then
@@ -341,9 +476,9 @@ cpu_busy_pct() {
     a="$(cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null)"
     sleep 1
     b="$(cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null)"
-    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_THREADS" 'BEGIN{
+    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_QUOTA" 'BEGIN{
       d = b - a;
-      if (c <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000000 * c) }'
+      if (c+0 <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000000 * c) }'
     return 0
   fi
   if [ -r /proc/stat ]; then
@@ -410,52 +545,72 @@ sb_field() {  # sb_field <output> <sed pattern>
 run_cpu() {
   local out
   head2 "CPU"
-  out="$(sysbench cpu --threads="$CPU_THREADS" --time="$TIME_PER_TEST" --cpu-max-prime=20000 run 2>/dev/null)"
-  R_CPU_MULTI="$(sb_field "$out" 's/^ *events per second: *//p')"
-  kv "all cores ($CPU_THREADS threads)" "${R_CPU_MULTI:-0} events/s"
+  if out="$(run_sysbench cpu-multi sysbench cpu --threads="$CPU_THREADS" \
+              --time="$TIME_PER_TEST" --cpu-max-prime=20000 run)"; then
+    R_CPU_MULTI="$(metric_or_error cpu-multi "$(sb_field "$out" 's/^ *events per second: *//p')")"
+  else
+    R_CPU_MULTI="ERROR"
+  fi
+  kv "all cores ($CPU_THREADS threads)" "$R_CPU_MULTI events/s"
 
-  out="$(sysbench cpu --threads=1 --time="$TIME_PER_TEST" --cpu-max-prime=20000 run 2>/dev/null)"
-  R_CPU_SINGLE="$(sb_field "$out" 's/^ *events per second: *//p')"
-  kv "single thread" "${R_CPU_SINGLE:-0} events/s"
+  if out="$(run_sysbench cpu-single sysbench cpu --threads=1 \
+              --time="$TIME_PER_TEST" --cpu-max-prime=20000 run)"; then
+    R_CPU_SINGLE="$(metric_or_error cpu-single "$(sb_field "$out" 's/^ *events per second: *//p')")"
+  else
+    R_CPU_SINGLE="ERROR"
+  fi
+  kv "single thread" "$R_CPU_SINGLE events/s"
 }
 
-mem_run() {  # mem_run <oper> <access mode> <block size>
+mem_run() {  # mem_run <label> <oper> <access mode> <block size>
   local total_mb out
   total_mb=$(( MEM_TOTAL_MB * 100 ))
   [ "$total_mb" -gt 0 ] || total_mb=100000
-  out="$(sysbench memory --threads="$CPU_THREADS" --time="$TIME_PER_TEST" \
-          --memory-block-size="$3" --memory-total-size="${total_mb}M" \
-          --memory-oper="$1" --memory-access-mode="$2" run 2>/dev/null)"
-  echo "$out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p' | head -1
+  if ! out="$(run_sysbench "$1" sysbench memory --threads="$CPU_THREADS" --time="$TIME_PER_TEST" \
+               --memory-block-size="$4" --memory-total-size="${total_mb}M" \
+               --memory-oper="$2" --memory-access-mode="$3" run)"; then
+    echo "ERROR"
+    return 1
+  fi
+  metric_or_error "$1" "$(echo "$out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p' | head -1)"
 }
 
 run_memory() {
   head2 "Memory"
-  R_MEM_WRITE="$(mem_run write seq 1M)"
-  kv "sequential write" "${R_MEM_WRITE:-0} MiB/s   (1M blocks)"
-  R_MEM_READ="$(mem_run read seq 1M)"
-  kv "sequential read" "${R_MEM_READ:-0} MiB/s   (1M blocks)"
+  R_MEM_WRITE="$(mem_run mem-write write seq 1M)"
+  kv "sequential write" "$R_MEM_WRITE MiB/s   (1M blocks)"
+  R_MEM_READ="$(mem_run mem-read read seq 1M)"
+  kv "sequential read" "$R_MEM_READ MiB/s   (1M blocks)"
   # small blocks in random order: this one is about access latency, not bandwidth
-  R_MEM_RND="$(mem_run write rnd 4K)"
-  kv "random write" "${R_MEM_RND:-0} MiB/s   (4K blocks, random order)"
+  R_MEM_RND="$(mem_run mem-random write rnd 4K)"
+  kv "random write" "$R_MEM_RND MiB/s   (4K blocks, random order)"
 
   # the memory subscore uses read and write together; the random figure is
   # reported because it says something different, not because it averages well
-  R_MEMORY="$(awk -v a="${R_MEM_WRITE:-0}" -v b="${R_MEM_READ:-0}" \
-              'BEGIN{ if (a+0<=0 || b+0<=0) { print (a+0>0?a:b) } else { printf "%.2f", sqrt(a*b) } }')"
-  kv "used for scoring" "${R_MEMORY:-0} MiB/s   (geometric mean of read and write)"
+  if is_num "$R_MEM_WRITE" && is_num "$R_MEM_READ"; then
+    R_MEMORY="$(awk -v a="$R_MEM_WRITE" -v b="$R_MEM_READ" 'BEGIN{printf "%.2f", sqrt(a*b)}')"
+    kv "used for scoring" "$R_MEMORY MiB/s   (geometric mean of read and write)"
+  else
+    R_MEMORY="ERROR"
+  fi
 }
 
 run_threads() {
   local out events
   head2 "Threads"
   # oversubscribe on purpose: this measures the scheduler under contention
-  out="$(sysbench threads --threads=$((CPU_THREADS * 4)) --time="$TIME_PER_TEST" \
-          --thread-yields=1000 --thread-locks=8 run 2>/dev/null)"
+  if ! out="$(run_sysbench threads sysbench threads --threads=$((CPU_THREADS * 4)) \
+               --time="$TIME_PER_TEST" --thread-yields=1000 --thread-locks=8 run)"; then
+    R_THREADS="ERROR"; kv "$((CPU_THREADS * 4)) threads" "ERROR"; return 0
+  fi
   events="$(sb_field "$out" 's/^ *total number of events: *//p')"
   # the threads test reports no events/s line, so derive it
-  R_THREADS="$(fdiv "${events:-0}" "$TIME_PER_TEST")"
-  kv "$((CPU_THREADS * 4)) threads" "${R_THREADS:-0} events/s"
+  if is_num "$events"; then
+    R_THREADS="$(fdiv "$events" "$TIME_PER_TEST")"
+  else
+    R_THREADS="$(metric_or_error threads "")"
+  fi
+  kv "$((CPU_THREADS * 4)) threads" "$R_THREADS events/s"
 }
 
 run_mutex() {
@@ -465,22 +620,39 @@ run_mutex() {
   # count. Reporting the elapsed time would therefore not compare across machines
   # with different core counts; throughput does.
   locks=50000
-  out="$(sysbench mutex --threads="$CPU_THREADS" --mutex-num=4096 \
-          --mutex-locks="$locks" --mutex-loops=5000 run 2>/dev/null)"
+  if ! out="$(run_sysbench mutex sysbench mutex --threads="$CPU_THREADS" --mutex-num=4096 \
+               --mutex-locks="$locks" --mutex-loops=5000 run)"; then
+    R_MUTEX="ERROR"; kv "$CPU_THREADS threads" "ERROR"; return 0
+  fi
   secs="$(echo "$out" | sed -n 's/^ *total time: *\([0-9.]*\)s.*/\1/p' | head -1)"
-  R_MUTEX="$(awk -v t="$CPU_THREADS" -v l="$locks" -v s="${secs:-0}" \
-             'BEGIN{ if (s+0 <= 0) print "0"; else printf "%.0f", (t*l)/s }')"
-  kv "$CPU_THREADS threads" "${R_MUTEX:-0} locks/s  (${secs:-?}s for $((CPU_THREADS * locks)) locks)"
-}
-
-IO_PREPARED=0
-io_cleanup() {
-  if [ "$IO_PREPARED" -eq 1 ]; then
-    ( cd "${IO_DIR:-$PWD}" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" cleanup >/dev/null 2>&1 )
-    IO_PREPARED=0
+  if is_num "$secs" && awk -v s="$secs" 'BEGIN{exit !(s+0 > 0)}'; then
+    R_MUTEX="$(awk -v t="$CPU_THREADS" -v l="$locks" -v s="$secs" 'BEGIN{printf "%.0f", (t*l)/s}')"
+    kv "$CPU_THREADS threads" "$R_MUTEX locks/s  (${secs}s for $((CPU_THREADS * locks)) locks)"
+  else
+    R_MUTEX="$(metric_or_error mutex "")"
+    kv "$CPU_THREADS threads" "ERROR"
   fi
 }
-trap io_cleanup EXIT INT TERM
+
+IO_WORK_DIR=""
+io_cleanup() {
+  # only ever removes the directory this run created, never a caller's path
+  case "$IO_WORK_DIR" in
+    */.perfcheck.*)
+      if [ -d "$IO_WORK_DIR" ]; then
+        ( cd "$IO_WORK_DIR" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" cleanup >/dev/null 2>&1 )
+        rm -rf -- "$IO_WORK_DIR"
+      fi
+      IO_WORK_DIR="" ;;
+  esac
+}
+cleanup_all() {
+  io_cleanup
+  rm -f "$TEST_ERR_FILE"
+}
+trap cleanup_all EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 IO_SIZE_MB=0
 IO_CACHED=0
@@ -491,6 +663,11 @@ run_io() {
   dir="${IO_DIR:-$PWD}"
   head2 "File I/O"
 
+  if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
+    say "  ${C_WARN}skipped${C_RESET}: $dir is not a writable directory"
+    note_error fileio
+    return 0
+  fi
   free_mb="$(df -Pm "$dir" 2>/dev/null | awk 'NR==2{print $4}')"
   [ -n "$free_mb" ] || free_mb=0
   # big enough to defeat the page cache, small enough to be polite: 2x RAM,
@@ -502,11 +679,24 @@ run_io() {
     say "  ${C_WARN}skipped${C_RESET}: only ${free_mb} MiB free in $dir"
     return 0
   fi
-  kv "test file" "${IO_SIZE_MB} MiB in $dir (${DISK_TYPE:-unknown media})"
+  # sysbench always writes test_file.0 .. test_file.N into the working directory.
+  # A private directory keeps two runs from overwriting each other's files and
+  # from touching files that were already there.
+  IO_WORK_DIR="$(mktemp -d "$dir/.perfcheck.XXXXXX" 2>/dev/null)"
+  if [ -z "$IO_WORK_DIR" ] || [ ! -d "$IO_WORK_DIR" ]; then
+    say "  ${C_WARN}skipped${C_RESET}: could not create a work directory in $dir"
+    note_error fileio
+    return 0
+  fi
+  dir="$IO_WORK_DIR"
+  kv "test file" "${IO_SIZE_MB} MiB in $IO_WORK_DIR (${DISK_TYPE:-unknown media})"
 
-  ( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" prepare >/dev/null 2>&1 ) || {
-    say "  ${C_WARN}prepare failed${C_RESET}"; return 0; }
-  IO_PREPARED=1
+  if ! ( cd "$dir" && sysbench fileio --file-total-size="${IO_SIZE_MB}M" prepare >/dev/null 2>&1 ); then
+    say "  ${C_WARN}prepare failed${C_RESET}"
+    note_error fileio
+    io_cleanup
+    return 0
+  fi
 
   # Without O_DIRECT the page cache answers most of the requests and the result
   # describes the cache, not the disk. Not every filesystem or platform supports
@@ -536,7 +726,8 @@ run_io() {
   R_IO_SEQ_READ="$(sb_field "$out" 's/^ *read, MiB\/s: *//p')"
   kv "sequential read" "${R_IO_SEQ_READ:-0} MiB/s"
 
-  # random read/write - what a database does
+  # random read/write, non-durable: --file-fsync-freq=0 means nothing is flushed,
+  # so this is raw device throughput and not what a durable commit would cost
   out="$(io_mode rndrw 's/^ *reads\/s: *//p')"
   R_IO_READ="$(sb_field "$out" 's/^ *read, MiB\/s: *//p')"
   R_IO_WRITE="$(sb_field "$out" 's/^ *written, MiB\/s: *//p')"
@@ -545,7 +736,7 @@ run_io() {
   w="$(sb_field "$out" 's/^ *writes\/s: *//p')"
   R_IO_IOPS="$(awk -v a="${r:-0}" -v b="${w:-0}" 'BEGIN{printf "%.1f", a+b}')"
   R_IO_P95="$(sb_field "$out" 's/^ *95th percentile: *//p')"
-  kv "random read/write" "${R_IO_IOPS} IOPS   ${R_IO_READ:-0} + ${R_IO_WRITE:-0} MiB/s"
+  kv "random read/write" "${R_IO_IOPS} IOPS   ${R_IO_READ:-0} + ${R_IO_WRITE:-0} MiB/s   (non-durable)"
   kv "95th pct latency" "${R_IO_P95:-?} ms"
 
   # last, because it shortens the files
@@ -561,14 +752,36 @@ run_io() {
 # ---------------------------------------------------------------------------
 S_CPU_MULTI=0; S_CPU_SINGLE=0; S_MEMORY=0; S_THREADS=0; S_MUTEX=0; S_IO=0; COMPOSITE=0
 
+score_one() {  # score_one <measured> <reference>
+  if is_num "$1"; then
+    fpct "$1" "$2"
+  else
+    echo "ERROR"
+  fi
+}
+
 score_all() {
-  S_CPU_MULTI="$(fpct "${R_CPU_MULTI:-0}" "$REF_CPU_MULTI")"
-  S_CPU_SINGLE="$(fpct "${R_CPU_SINGLE:-0}" "$REF_CPU_SINGLE")"
-  S_MEMORY="$(fpct "${R_MEMORY:-0}" "$REF_MEMORY")"
-  S_THREADS="$(fpct "${R_THREADS:-0}" "$REF_THREADS")"
-  S_MUTEX="$(fpct "${R_MUTEX:-0}" "$REF_MUTEX")"
+  S_CPU_MULTI="$(score_one "$R_CPU_MULTI" "$REF_CPU_MULTI")"
+  S_CPU_SINGLE="$(score_one "$R_CPU_SINGLE" "$REF_CPU_SINGLE")"
+  S_MEMORY="$(score_one "$R_MEMORY" "$REF_MEMORY")"
+  S_THREADS="$(score_one "$R_THREADS" "$REF_THREADS")"
+  S_MUTEX="$(score_one "$R_MUTEX" "$REF_MUTEX")"
   if [ "$DO_IO" -eq 1 ]; then
-    S_IO="$(fpct "${R_IO_IOPS:-0}" "$REF_IO_IOPS")"
+    if [ "$IO_CACHED" -eq 1 ]; then
+      # a run the page cache answered is not on the same scale as a direct one
+      S_IO="cached"
+    else
+      S_IO="$(score_one "$R_IO_IOPS" "$REF_IO_IOPS")"
+    fi
+  fi
+
+  # Every one of the five is required. Dropping a failed test from the weights
+  # would renormalise the rest and could raise the composite, which is exactly
+  # the wrong direction.
+  if ! is_num "$S_CPU_MULTI" || ! is_num "$S_CPU_SINGLE" || ! is_num "$S_MEMORY" \
+     || ! is_num "$S_THREADS" || ! is_num "$S_MUTEX"; then
+    COMPOSITE="N/A"
+    return 0
   fi
 
   # weighted geometric mean - a ratio scale calls for it, and one very high
@@ -589,8 +802,9 @@ score_all() {
     }')"
 }
 
-report() {
-  head2 "Scores (100 = reference profile v1)"
+report_scores() {
+  head2 "Scores (perfcheck relative score v1: 100 = the reference profile below)"
+  [ "$QUIET" -eq 1 ] && return 0
   printf "  ${C_KEY}%-24s %12s %12s %6s${C_RESET}\n" "TEST" "MEASURED" "REFERENCE" "SCORE"
   printf "  %-24s %12s %12s %6s\n" "cpu, all cores"   "${R_CPU_MULTI:-0}"  "$REF_CPU_MULTI"  "$S_CPU_MULTI"
   printf "  %-24s %12s %12s %6s\n" "cpu, single thread" "${R_CPU_SINGLE:-0}" "$REF_CPU_SINGLE" "$S_CPU_SINGLE"
@@ -613,9 +827,34 @@ report() {
     say "  ${C_DIM}runs shorter than 10s vary between repeats, the memory test most of all${C_RESET}"
   fi
 
-  head2 "Composite"
-  printf "  ${C_OK}%s${C_RESET}   %s${C_DIM}%s${C_RESET}\n" \
-    "$COMPOSITE" "$HOST_NAME" "${HOST_IP:+  $HOST_IP}"
+}
+
+report_composite() {
+  [ "$QUIET" -eq 1 ] || head2 "Composite"
+  if [ "$COMPOSITE" = "N/A" ]; then
+    printf "  ${C_ERR}N/A${C_RESET}   %s${C_DIM}%s${C_RESET}\n" "$HOST_NAME" "${HOST_IP:+  $HOST_IP}"
+    printf "  ${C_ERR}not scored${C_RESET}: these tests failed: %s\n" "$(test_errors)"
+  else
+    printf "  ${C_OK}%s${C_RESET}   %s${C_DIM}%s${C_RESET}\n" \
+      "$COMPOSITE" "$HOST_NAME" "${HOST_IP:+  $HOST_IP}"
+  fi
+
+  # one line that says what was measured, so a score pasted somewhere still
+  # carries the machine it came from
+  local cores_desc mem_desc
+  cores_desc="$CPU_LOGICAL logical / $CPU_PHYSICAL physical / $CPU_SOCKETS socket(s)"
+  if [ -n "$CPU_QUOTA" ]; then
+    cores_desc="$CPU_THREADS of $cores_desc, cgroup quota $CPU_QUOTA"
+  fi
+  case "$VIRT" in
+    ""|none) : ;;
+    *) cores_desc="$cores_desc, $VIRT guest" ;;
+  esac
+  mem_desc="${MEM_TOTAL_MB} MiB RAM"
+  [ "${MEM_AVAIL_MB:-0}" -gt 0 ] 2>/dev/null && mem_desc="$mem_desc (${MEM_AVAIL_MB} MiB available)"
+  printf "  %s | %s | %s\n" "$CPU_MODEL" "$cores_desc" "$mem_desc"
+
+  [ "$QUIET" -eq 1 ] && return 0
   printf "  ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex %s%%${C_RESET}\n" \
     "$W_CPU_MULTI" "$W_CPU_SINGLE" "$W_MEMORY" "$W_THREADS" "$W_MUTEX"
 }
@@ -623,6 +862,8 @@ report() {
 # ---------------------------------------------------------------------------
 # remote fan-out
 # ---------------------------------------------------------------------------
+REMOTE_FAIL_FLAG=""
+
 run_remote() {
   local targets host out line rows="" self="$0"
   targets="$(echo "$REMOTE" | tr ',' ' ')"
@@ -630,6 +871,7 @@ run_remote() {
     printf "\n${C_HEAD}>>> ssh %s${C_RESET}\n" "$host" >&2
     if [ ! -r "$self" ]; then
       printf "  cannot read this script (%s) to pipe it over ssh\n" "$self" >&2
+      : > "$REMOTE_FAIL_FLAG"
       rows="$rows
 PERFCHECK-RESULT|$host|-|?|?|ERROR"
       continue
@@ -640,8 +882,12 @@ PERFCHECK-RESULT|$host|-|?|?|ERROR"
     echo "$out" | grep -v '^PERFCHECK-RESULT|' >&2
     line="$(echo "$out" | grep '^PERFCHECK-RESULT|' | tail -1)"
     if [ -z "$line" ]; then
+      : > "$REMOTE_FAIL_FLAG"
       line="PERFCHECK-RESULT|$host|-|?|?|UNREACHABLE"
     else
+      case "$line" in
+        *"|N/A|"*) : > "$REMOTE_FAIL_FLAG" ;;
+      esac
       line="PERFCHECK-RESULT|$host|$(echo "$line" | cut -d'|' -f3-)"
     fi
     rows="$rows
@@ -674,6 +920,7 @@ kv "time per test" "${TIME_PER_TEST}s"
 
 if ! check_idle; then
   LOCAL_RC=1
+  COMPOSITE="BUSY"
 else
   ensure_sysbench
   kv "sysbench" "$(sysbench --version 2>/dev/null)"
@@ -683,17 +930,27 @@ else
   run_mutex
   run_io
   score_all
-  report
+  report_scores
+  report_composite
 fi
 
 LOCAL_ROW="PERFCHECK-RESULT|$HOST_NAME|${HOST_IP:--}|$CPU_THREADS|${MEM_TOTAL_MB}|$COMPOSITE|$S_CPU_MULTI|$S_CPU_SINGLE|$S_MEMORY|$S_THREADS|$S_MUTEX|${S_IO:-0}"
 [ "$EMIT_RESULT" -eq 1 ] && echo "$LOCAL_ROW"
 
 ROWS="$LOCAL_ROW"
+REMOTE_RC=0
 if [ -n "$REMOTE" ]; then
+  # run_remote runs in a command substitution, so it reports failure through a
+  # file rather than a variable
+  REMOTE_FAIL_FLAG="$(mktemp 2>/dev/null || echo "/tmp/perfcheck.remote.$$")"
+  rm -f "$REMOTE_FAIL_FLAG"
   REMOTE_ROWS="$(run_remote)"
   [ -n "$REMOTE_ROWS" ] && ROWS="$ROWS
 $REMOTE_ROWS"
+  if [ -f "$REMOTE_FAIL_FLAG" ]; then
+    REMOTE_RC=1
+    rm -f "$REMOTE_FAIL_FLAG"
+  fi
 fi
 
 if [ "$(echo "$ROWS" | grep -c '^PERFCHECK-RESULT|')" -gt 1 ]; then
@@ -704,4 +961,12 @@ if [ "$(echo "$ROWS" | grep -c '^PERFCHECK-RESULT|')" -gt 1 ]; then
   done
 fi
 
-exit $LOCAL_RC
+# a benchmark that could not measure what it was asked to measure is a failure,
+# on this host or on any host reached from it
+if has_test_errors || [ "$COMPOSITE" = "N/A" ]; then
+  LOCAL_RC=2
+fi
+if [ "$LOCAL_RC" -ne 0 ]; then
+  exit "$LOCAL_RC"
+fi
+exit "$REMOTE_RC"

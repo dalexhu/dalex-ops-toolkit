@@ -18,9 +18,11 @@ reference profile.
 bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/bench/perfcheck.sh)
 ```
 
-Runs on Debian/Ubuntu, the RHEL family and macOS. Installs `sysbench` if it is missing —
-`apt`, `dnf` with EPEL enabled first (it is not in the RHEL base repos), or `brew`. Pass
-`--no-install` to skip that.
+Runs on Debian/Ubuntu, the RHEL family and macOS. **It does not install anything by default**:
+installing packages changes the machine being measured and loads it while doing so. When
+`sysbench` is missing it prints the command for the platform and exits 2. `--install` lets it
+install (`apt`, `dnf` with EPEL enabled first — it is not in the RHEL base repos, or `brew`),
+and then says to run again for numbers worth keeping.
 
 On macOS the machine facts come from `sysctl` instead of `/proc`, and the disk tests always go
 through the page cache because macOS has no `O_DIRECT`; the report says so when that happens.
@@ -39,11 +41,12 @@ bash perfcheck.sh --remote app1,app2,db1
 --quick            Same as --time 3
 --io               Also run the file I/O test (off by default)
 --io-dir <path>    Directory for the I/O test file (default: current directory)
---no-install       Do not install sysbench if it is missing
+--install          Install sysbench when missing (off by default)
 --force            Run even when the machine is already busy
 --max-busy <pct>   Busy CPU percentage that stops the run (default 25)
 --remote <a[,b,]>  Also run on those ssh targets and print a fleet summary
 -q, --quiet        Summary only
+--help-scoring     Print the reference profile and the weights
 ```
 
 ### How it sizes itself
@@ -72,7 +75,7 @@ machine. The same run scored 83.8 before the quota was taken into account and 99
 | **Scheduler** | threads, 4× oversubscribed, `--thread-yields=1000 --thread-locks=8` | events/s, derived from the total event count — this test prints no rate of its own |
 | | mutex, 4096 mutexes, 50 000 locks per thread, 5 000 loops | locks/s |
 | **Disk** (opt-in) | sequential read | MiB/s |
-| | random read/write | IOPS, MiB/s, 95th percentile latency |
+| | random read/write, non-durable | IOPS, MiB/s, 95th percentile latency |
 | | sequential write | MiB/s |
 
 Not covered: network, GPU, NUMA locality, and any storage other than the filesystem holding
@@ -93,10 +96,10 @@ The mutex test takes `--mutex-locks` *per thread*, so its elapsed time is not co
 between machines with different core counts. Throughput is, which is why the metric is locks/s
 rather than seconds.
 
-### Scoring
+### Scoring — *perfcheck relative score v1*
 
 Each result is divided by the reference value for that test, so 100 means "the same as the
-reference". The composite is a **weighted geometric mean** of the five subscores:
+reference". `--help-scoring` prints the whole profile. The composite is a **weighted geometric mean** of the five subscores:
 
 | Subscore | Weight |
 |---|---|
@@ -108,6 +111,10 @@ reference". The composite is a **weighted geometric mean** of the five subscores
 
 A geometric mean is the right average for ratios, and unlike an arithmetic mean it does not let
 one enormous subscore carry the composite on its own.
+
+**All five are required.** If any of them fails, the composite is `N/A` and the exit status is
+2 — dropping a failed test from the weights would renormalise the rest and could raise the
+score, which is the wrong direction entirely.
 
 **File I/O never enters the composite**, so a score means the same thing whether or not `--io`
 was used. Storage varies far more than the rest of a machine and would drown everything else.
@@ -165,8 +172,16 @@ With `--remote`, the same identity is what the fleet summary is keyed on:
 
 - Runs shorter than 10 s vary between repeats, the memory test most of all. `--quick` is for
   checking that the script works, not for numbers you intend to compare.
-- The I/O test writes a file sized from RAM and free space, and removes it afterwards — on exit,
-  on interrupt, and on failure.
+- The I/O tests run with `--file-fsync-freq=0`, so nothing is flushed: they measure raw
+  non-durable throughput, not what a durable commit costs. For storage decisions that turn on
+  durability, `fio` with an explicit `fsync`/`iodepth`/`numjobs` profile is the right tool.
+- The I/O tests run inside a private `.perfcheck.XXXXXX` directory created in `--io-dir`, so two
+  runs cannot overwrite each other's `test_file.N` and files already there are left alone. The
+  directory is removed on exit, on interrupt and on failure.
+- A cached I/O run (no O_DIRECT) is reported but not scored: it is not on the same scale as a
+  direct one.
+- Exit status: 0 measured, 1 a host was unreachable or too busy, 2 a test failed or a dependency
+  or argument was wrong.
 - The busy guard exists because a benchmark on a busy host measures the other workload too. It
   samples actual CPU utilisation rather than the load average: on macOS the load average counts
   threads waiting on I/O and Mach ports, so an idle Mac reports a load of 8 while the CPU is 85%
@@ -187,8 +202,9 @@ With `--remote`, the same identity is what the fleet summary is keyed on:
 bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/bench/perfcheck.sh)
 ```
 
-支持 Debian/Ubuntu、RHEL 系与 macOS。`sysbench` 缺失时会自动装 —— `apt`、
-`dnf`(先启用 EPEL,基础仓库里没有它)或 `brew`。用 `--no-install` 可跳过。
+支持 Debian/Ubuntu、RHEL 系与 macOS。**默认不安装任何东西**:装包会改变被测机器,
+而且安装过程本身就在给机器加载。缺 `sysbench` 时会打印对应平台的安装命令并以 2 退出。
+加 `--install` 才会装(`apt`、`dnf` 先启用 EPEL、或 `brew`),装完会提示重新运行再取数。
 
 macOS 上机器信息取自 `sysctl` 而非 `/proc`;由于 macOS 没有 `O_DIRECT`,磁盘测试必然经过
 page cache,报告里会明确标出。
@@ -207,11 +223,12 @@ bash perfcheck.sh --remote app1,app2,db1
 --quick            等同 --time 3
 --io               跑文件 I/O 测试(默认不跑)
 --io-dir <path>    I/O 测试文件所在目录(默认当前目录)
---no-install       缺 sysbench 时不自动安装
+--install          缺 sysbench 时安装它(默认不装)
 --force            机器已经很忙时仍然强制运行
 --max-busy <pct>   超过这个 CPU 占用率就不跑(默认 25)
 --remote <a[,b,]>  同时在这些 ssh 目标上跑,最后出汇总表
 -q, --quiet        只输出汇总
+--help-scoring     打印参考基准与权重
 ```
 
 ### 怎么自动定型
@@ -239,7 +256,7 @@ bash perfcheck.sh --remote app1,app2,db1
 | **调度** | threads,4 倍超订,`--thread-yields=1000 --thread-locks=8` | events/s,由总事件数换算 —— 这项测试本身不输出速率 |
 | | mutex,4096 个 mutex、每线程 50000 次加锁、5000 次空循环 | locks/s |
 | **磁盘**(需 `--io`) | 顺序读 | MiB/s |
-| | 随机读写 | IOPS、MiB/s、95 分位延迟 |
+| | 随机读写(非持久化) | IOPS、MiB/s、95 分位延迟 |
 | | 顺序写 | MiB/s |
 
 未覆盖:网络、GPU、NUMA 局部性,以及 `--io-dir` 所在文件系统之外的任何存储。
@@ -255,9 +272,9 @@ bash perfcheck.sh --remote app1,app2,db1
 mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不同核数的机器之间不可比,
 吞吐才可比 —— 这就是指标用 locks/s 而不是秒的原因。
 
-### 打分方式
+### 打分方式 —— *perfcheck relative score v1*
 
-每项结果除以该项的参考值,100 表示"与参考基准相同"。综合分是五项子分的**加权几何平均**:
+每项结果除以该项的参考值,100 表示"与参考基准相同"。`--help-scoring` 可打印完整基准表。综合分是五项子分的**加权几何平均**:
 
 | 子项 | 权重 |
 |---|---|
@@ -268,6 +285,9 @@ mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不�
 | 互斥锁 | 10% |
 
 比值型数据本就该用几何平均;而且与算术平均不同,单独一项畸高的子分不会把综合分整个抬起来。
+
+**五项缺一不可。** 任一项失败,综合分显示 `N/A`,退出码为 2 —— 把失败项从权重里剔除会让其余项
+重新归一化,反而可能把分数抬高,方向完全错了。
 
 **文件 I/O 永远不进综合分**,所以跑没跑 `--io`,分数含义都一样。存储的离散度远大于机器其余部分,
 放进去会把其他项淹没。
@@ -287,7 +307,12 @@ PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
 
 - 短于 10 秒的运行在重复之间波动明显,内存测试尤甚。`--quick` 用来确认脚本能跑,
   不适合用来比较数字。
-- I/O 测试会写一个按内存与可用空间定大小的文件,结束后删除 —— 正常退出、被中断、失败时都会删。
+- I/O 测试带 `--file-fsync-freq=0`,不做任何 flush:量的是**非持久化**的裸吞吐,不代表一次持久化
+  提交的代价。要为存储选型做决策,应改用 `fio` 并显式给出 `fsync`/`iodepth`/`numjobs` 配置。
+- I/O 测试在 `--io-dir` 下新建的私有目录 `.perfcheck.XXXXXX` 里运行,两次并行运行不会互相覆盖
+  `test_file.N`,目录中原有文件也不会被动。正常退出、被中断、失败时该目录都会删除。
+- 走了 page cache 的 I/O 结果(无 O_DIRECT)只报告不打分:它和 direct 的结果不在同一标尺上。
+- 退出码:0 测完,1 有主机不可达或太忙,2 有测试失败、依赖缺失或参数错误。
 - 繁忙守卫的存在是因为:在繁忙机器上跑基准,量到的有一部分是别的负载。它采样的是**实际 CPU
   占用率**而非负载均值:macOS 的负载均值把等待 I/O 和 Mach 端口的线程也算进去,一台空闲的 Mac
   会报负载 8 而 CPU 其实 85% 空闲;而在容器里 `/proc/stat` 报的是宿主机的 CPU 而不是 cgroup 的。
