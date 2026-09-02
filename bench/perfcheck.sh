@@ -16,7 +16,7 @@ set -uo pipefail
 
 VERSION="1.0.0"
 
-TIME_PER_TEST=10
+TIME_PER_TEST=60
 DO_IO=0
 DO_INSTALL=0      # installing packages changes the machine being measured
 FORCE=0
@@ -34,8 +34,9 @@ perfcheck.sh - sysbench benchmark that sizes itself to the machine
 Usage: ./perfcheck.sh [options]
 
 Options:
-  --time <sec>       Seconds per test (default 10)
-  --quick            Same as --time 3
+  --time <sec>       Seconds per test (default 60). A full run is about six minutes,
+                     nine with --io
+  --quick            Same as --time 10, for checking that the script works
   --io               Also run the file I/O test. Off by default: it writes a file
                      sized from RAM and free space, and the result reflects the
                      storage rather than the machine
@@ -75,7 +76,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --time)       need_value "$@"; TIME_PER_TEST="$2"; shift ;;
     --time=*)     TIME_PER_TEST="${1#*=}" ;;
-    --quick)      TIME_PER_TEST=3 ;;
+    --quick)      TIME_PER_TEST=10 ;;
     --io)         DO_IO=1 ;;
     --io-dir)     need_value "$@"; IO_DIR="$2"; DO_IO=1; shift ;;
     --io-dir=*)   IO_DIR="${1#*=}"; DO_IO=1 ;;
@@ -241,7 +242,7 @@ fi
 CPU_MODEL="unknown"; CPU_LOGICAL=1; CPU_PHYSICAL=1; CPU_SOCKETS=1
 CPU_QUOTA=""          # cgroup cpu limit, in whole cores, when one is set
 CPU_THREADS=1         # threads the tests actually use
-MEM_TOTAL_MB=0; MEM_AVAIL_MB=0; VIRT="none"; GOVERNOR=""; DISK_TYPE=""
+MEM_TOTAL_MB=0; MEM_AVAIL_MB=0; VIRT="none"; GOVERNOR=""; DISK_TYPE=""; HYPERVISOR=""
 OS_NAME="unknown"; PKG=""; SUDO=""
 HOST_NAME=""; HOST_IP=""
 
@@ -337,8 +338,10 @@ detect_machine() {
     CPU_SOCKETS="$(lscpu 2>/dev/null | sed -n 's/^Socket(s): *//p' | head -1)"
     # lscpu prints a bare dash for fields it cannot determine, which happens for
     # the model name and socket count under emulation and in some guests
+    HYPERVISOR="$(lscpu 2>/dev/null | sed -n 's/^Hypervisor vendor: *//p' | head -1)"
     [ "$CPU_MODEL" = "-" ] && CPU_MODEL=""
     [ "$CPU_SOCKETS" = "-" ] && CPU_SOCKETS=""
+    [ "$HYPERVISOR" = "-" ] && HYPERVISOR=""
     local cps tps
     cps="$(lscpu 2>/dev/null | sed -n 's/^Core(s) per socket: *//p' | head -1)"
     tps="$(lscpu 2>/dev/null | sed -n 's/^Thread(s) per core: *//p' | head -1)"
@@ -823,8 +826,8 @@ report_scores() {
     fi
   fi
 
-  if [ "$TIME_PER_TEST" -lt 10 ]; then
-    say "  ${C_DIM}runs shorter than 10s vary between repeats, the memory test most of all${C_RESET}"
+  if [ "$TIME_PER_TEST" -lt 30 ]; then
+    say "  ${C_DIM}at ${TIME_PER_TEST}s per test the figures move between repeats, the memory test most of all${C_RESET}"
   fi
 
 }
@@ -839,20 +842,33 @@ report_composite() {
       "$COMPOSITE" "$HOST_NAME" "${HOST_IP:+  $HOST_IP}"
   fi
 
-  # one line that says what was measured, so a score pasted somewhere still
-  # carries the machine it came from
-  local cores_desc mem_desc
-  cores_desc="$CPU_LOGICAL logical / $CPU_PHYSICAL physical / $CPU_SOCKETS socket(s)"
-  if [ -n "$CPU_QUOTA" ]; then
-    cores_desc="$CPU_THREADS of $cores_desc, cgroup quota $CPU_QUOTA"
-  fi
-  case "$VIRT" in
-    ""|none) : ;;
-    *) cores_desc="$cores_desc, $VIRT guest" ;;
-  esac
+  # Two lines, because on a guest they are two different machines: the processor
+  # and core count come from the host, while the share of it this instance was
+  # given comes from the hypervisor or the cgroup.
+  local host_desc inst_label inst_desc mem_desc
+  host_desc="$CPU_MODEL | $CPU_LOGICAL logical / $CPU_PHYSICAL physical / $CPU_SOCKETS socket(s) visible"
+  [ -n "$HYPERVISOR" ] && host_desc="$host_desc | $HYPERVISOR hypervisor"
+
   mem_desc="${MEM_TOTAL_MB} MiB RAM"
   [ "${MEM_AVAIL_MB:-0}" -gt 0 ] 2>/dev/null && mem_desc="$mem_desc (${MEM_AVAIL_MB} MiB available)"
-  printf "  %s | %s | %s\n" "$CPU_MODEL" "$cores_desc" "$mem_desc"
+
+  if [ -n "$CPU_QUOTA" ]; then
+    inst_label="container"
+    inst_desc="$CPU_THREADS of $CPU_LOGICAL threads, cgroup quota $CPU_QUOTA cores | $mem_desc"
+  else
+    case "$VIRT" in
+      ""|none)
+        inst_label="bare metal"
+        inst_desc="$CPU_THREADS threads used | $mem_desc" ;;
+      *)
+        inst_label="$VIRT guest"
+        inst_desc="$CPU_THREADS vCPU used | $mem_desc" ;;
+    esac
+  fi
+  [ -n "$GOVERNOR" ] && inst_desc="$inst_desc | governor $GOVERNOR"
+
+  printf "  ${C_DIM}host      ${C_RESET} %s\n" "$host_desc"
+  printf "  ${C_DIM}%-10s${C_RESET} %s\n" "$inst_label" "$inst_desc"
 
   [ "$QUIET" -eq 1 ] && return 0
   printf "  ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex %s%%${C_RESET}\n" \
