@@ -374,12 +374,6 @@ Debian 12、Ubuntu 24.04 验证。`tzcheck.ps1` 已在 PowerShell 7.4(Linux 容�
 
 ---
 
-## License
-
-MIT
-
----
-
 ## Disclaimer / 免责声明
 
 **English.** These are personal utilities, shared in case they are useful to someone else, and
@@ -410,3 +404,9 @@ Debian 与 AlmaLinux 项目、SDKMAN!、Homebrew、Node.js、Python、MySQL、Do
 脚本会读取系统状态,并在被要求时通过 ssh 连接命令行上指定的主机、执行包管理器命令。
 它们报告的是运行当时主机上的数据,不构成对该主机或其上任何运行时的正确性认证。
 本仓库中的任何内容均不构成法律意见。
+
+---
+
+## License
+
+MIT
