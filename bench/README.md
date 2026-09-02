@@ -37,8 +37,9 @@ bash perfcheck.sh --remote app1,app2,db1
 ### Options
 
 ```
---time <sec>       Seconds per test (default 10)
---quick            Same as --time 3
+--time <sec>       Seconds per test (default 60); a full run takes about six
+                   minutes, nine with --io
+--quick            Same as --time 10, for checking that the script works
 --io               Also run the file I/O test (off by default)
 --io-dir <path>    Directory for the I/O test file (default: current directory)
 --install          Install sysbench when missing (off by default)
@@ -170,8 +171,10 @@ With `--remote`, the same identity is what the fleet summary is keyed on:
 
 ### Notes
 
-- Runs shorter than 10 s vary between repeats, the memory test most of all. `--quick` is for
-  checking that the script works, not for numbers you intend to compare.
+- Each test runs for 60 seconds by default: six timed tests, so about six minutes, and about
+  nine with `--io`. Shorter runs move between repeats — the memory test most of all — so
+  `--quick` (10 s) is for checking that the script works, not for numbers you intend to compare.
+  The mutex test is not timed: it does a fixed number of locks per thread and reports the rate.
 - The I/O tests run with `--file-fsync-freq=0`, so nothing is flushed: they measure raw
   non-durable throughput, not what a durable commit costs. For storage decisions that turn on
   durability, `fio` with an explicit `fsync`/`iodepth`/`numjobs` profile is the right tool.
@@ -219,8 +222,8 @@ bash perfcheck.sh --remote app1,app2,db1
 ### 选项
 
 ```
---time <sec>       每项测试的秒数(默认 10)
---quick            等同 --time 3
+--time <sec>       每项测试的秒数(默认 60);跑完一轮约 6 分钟,带 --io 约 9 分钟
+--quick            等同 --time 10,用来确认脚本能跑
 --io               跑文件 I/O 测试(默认不跑)
 --io-dir <path>    I/O 测试文件所在目录(默认当前目录)
 --install          缺 sysbench 时安装它(默认不装)
@@ -305,8 +308,9 @@ PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
 
 ### 注意
 
-- 短于 10 秒的运行在重复之间波动明显,内存测试尤甚。`--quick` 用来确认脚本能跑,
-  不适合用来比较数字。
+- 每项测试默认跑 60 秒:共 6 项计时测试,整轮约 6 分钟,带 `--io` 约 9 分钟。跑得越短,
+  重复之间波动越大 —— 内存测试尤其明显 —— 所以 `--quick`(10 秒)只用来确认脚本能跑,
+  不适合用来比较数字。mutex 那项不计时:它做固定次数的加锁,报告速率。
 - I/O 测试带 `--file-fsync-freq=0`,不做任何 flush:量的是**非持久化**的裸吞吐,不代表一次持久化
   提交的代价。要为存储选型做决策,应改用 `fio` 并显式给出 `fsync`/`iodepth`/`numjobs` 配置。
 - I/O 测试在 `--io-dir` 下新建的私有目录 `.perfcheck.XXXXXX` 里运行,两次并行运行不会互相覆盖
