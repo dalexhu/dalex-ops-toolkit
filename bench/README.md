@@ -41,6 +41,7 @@ bash perfcheck.sh --remote app1,app2,db1
 --io-dir <path>    Directory for the I/O test file (default: current directory)
 --no-install       Do not install sysbench if it is missing
 --force            Run even when the machine is already busy
+--max-busy <pct>   Busy CPU percentage that stops the run (default 25)
 --remote <a[,b,]>  Also run on those ssh targets and print a fleet summary
 -q, --quiet        Summary only
 ```
@@ -53,7 +54,7 @@ bash perfcheck.sh --remote app1,app2,db1
 | **cgroup CPU quota** | when a container or slice caps CPU below the visible core count, the tests use the quota instead — `cpu.max` on cgroup v2, `cpu.cfs_quota_us` on v1 |
 | total RAM | memory test target size; I/O file size starts at 2× RAM |
 | free space in the I/O directory | I/O file capped at a quarter of it, and at 8 GiB |
-| 1-minute load average | the run is refused if load exceeds 25% of the usable cores, unless `--force` |
+| **CPU busy percentage**, sampled over a second | the run is refused above 25% busy, unless `--force`; raise the bar with `--max-busy` |
 
 The quota reading matters more than it sounds. In a container limited to 4 CPUs on a 16-core
 host, `nproc` still answers 16; sizing the CPU test from that measures the throttling, not the
@@ -155,7 +156,12 @@ Composite
   checking that the script works, not for numbers you intend to compare.
 - The I/O test writes a file sized from RAM and free space, and removes it afterwards — on exit,
   on interrupt, and on failure.
-- The load guard exists because a benchmark on a busy host measures the other workload too.
+- The busy guard exists because a benchmark on a busy host measures the other workload too. It
+  samples actual CPU utilisation rather than the load average: on macOS the load average counts
+  threads waiting on I/O and Mach ports, so an idle Mac reports a load of 8 while the CPU is 85%
+  idle, and inside a container `/proc/stat` reports the host's CPUs rather than the cgroup's.
+  Where a cgroup quota exists the guard reads `cpu.stat` instead. When it refuses, it prints the
+  busiest processes it found.
 
 ---
 
@@ -192,6 +198,7 @@ bash perfcheck.sh --remote app1,app2,db1
 --io-dir <path>    I/O 测试文件所在目录(默认当前目录)
 --no-install       缺 sysbench 时不自动安装
 --force            机器已经很忙时仍然强制运行
+--max-busy <pct>   超过这个 CPU 占用率就不跑(默认 25)
 --remote <a[,b,]>  同时在这些 ssh 目标上跑,最后出汇总表
 -q, --quiet        只输出汇总
 ```
@@ -204,7 +211,7 @@ bash perfcheck.sh --remote app1,app2,db1
 | **cgroup CPU 配额** | 容器或 slice 把 CPU 限制在可见核数之下时,按配额而不是核数定线程 —— cgroup v2 读 `cpu.max`,v1 读 `cpu.cfs_quota_us` |
 | 总内存 | 内存测试的目标容量;I/O 文件初始按 2× 内存 |
 | I/O 目录可用空间 | I/O 文件上限取其 1/4,且不超过 8 GiB |
-| 1 分钟负载 | 负载超过可用核数的 25% 时拒绝运行,除非 `--force` |
+| **CPU 实际占用率**(采样 1 秒) | 超过 25% 时拒绝运行,除非 `--force`;可用 `--max-busy` 调高门槛 |
 
 配额这条比听起来重要。在 16 核宿主机上限制为 4 CPU 的容器里,`nproc` 仍然回答 16,
 按它定线程测到的是**限流**而不是机器本身。同一次运行,计入配额前得 83.8 分,计入后 99.5 分。
@@ -270,4 +277,7 @@ PERFCHECK_REF_CPU_MULTI=45000 PERFCHECK_REF_MEMORY=100000 bash perfcheck.sh
 - 短于 10 秒的运行在重复之间波动明显,内存测试尤甚。`--quick` 用来确认脚本能跑,
   不适合用来比较数字。
 - I/O 测试会写一个按内存与可用空间定大小的文件,结束后删除 —— 正常退出、被中断、失败时都会删。
-- 负载守卫的存在是因为:在繁忙机器上跑基准,量到的有一部分是别的负载。
+- 繁忙守卫的存在是因为:在繁忙机器上跑基准,量到的有一部分是别的负载。它采样的是**实际 CPU
+  占用率**而非负载均值:macOS 的负载均值把等待 I/O 和 Mach 端口的线程也算进去,一台空闲的 Mac
+  会报负载 8 而 CPU 其实 85% 空闲;而在容器里 `/proc/stat` 报的是宿主机的 CPU 而不是 cgroup 的。
+  存在 cgroup 配额时改读 `cpu.stat`。拒绝运行时会列出当时最忙的几个进程。

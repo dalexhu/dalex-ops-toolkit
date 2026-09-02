@@ -24,7 +24,7 @@ QUIET=0
 EMIT_RESULT=0
 REMOTE=""
 IO_DIR=""
-LOAD_LIMIT_PCT=25      # refuse to start if 1-min load exceeds this % of cores
+BUSY_LIMIT_PCT=25      # refuse to start if the CPU is busier than this
 
 usage() {
   cat <<'USAGE'
@@ -41,6 +41,7 @@ Options:
   --io-dir <path>    Directory for the I/O test file (default: current directory)
   --no-install       Do not try to install sysbench if it is missing
   --force            Run even when the machine is already busy
+  --max-busy <pct>   Busy CPU percentage that stops the run (default 25)
   --remote <a[,b,]>  Also run on those ssh targets and print a fleet summary
   -q, --quiet        Print the summary only
   -h, --help         This help
@@ -66,6 +67,8 @@ while [ $# -gt 0 ]; do
     --io-dir=*)   IO_DIR="${1#*=}"; DO_IO=1 ;;
     --no-install) DO_INSTALL=0 ;;
     --force)      FORCE=1 ;;
+    --max-busy)   BUSY_LIMIT_PCT="${2:-25}"; shift ;;
+    --max-busy=*) BUSY_LIMIT_PCT="${1#*=}" ;;
     --remote)     REMOTE="${2:-}"; shift ;;
     --remote=*)   REMOTE="${1#*=}" ;;
     -q|--quiet)   QUIET=1 ;;
@@ -289,19 +292,76 @@ ensure_sysbench() {
   say "  installed $(sysbench --version 2>/dev/null)"
 }
 
+# Busy percentage, sampled over a second. The load average is not usable for this:
+# on macOS it counts threads waiting on I/O and Mach ports as well as runnable
+# ones, so an idle Mac reports a load of 8 while the CPU is 85% idle.
+cpu_busy_pct() {
+  # In a container /proc/stat still reports the host's CPUs, so a cgroup with a
+  # quota has to be measured against its own usage counter instead.
+  if [ -n "$CPU_QUOTA" ] && [ -r /sys/fs/cgroup/cpu.stat ]; then
+    local a b
+    a="$(awk '/^usage_usec/{print $2}' /sys/fs/cgroup/cpu.stat)"
+    sleep 1
+    b="$(awk '/^usage_usec/{print $2}' /sys/fs/cgroup/cpu.stat)"
+    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_THREADS" 'BEGIN{
+      d = b - a;
+      if (c <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000 * c) }'
+    return 0
+  fi
+  if [ -n "$CPU_QUOTA" ] && [ -r /sys/fs/cgroup/cpuacct/cpuacct.usage ]; then
+    local a b
+    a="$(cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null)"
+    sleep 1
+    b="$(cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null)"
+    awk -v a="${a:-0}" -v b="${b:-0}" -v c="$CPU_THREADS" 'BEGIN{
+      d = b - a;
+      if (c <= 0 || d < 0) print "0"; else printf "%.1f", 100 * d / (1000000000 * c) }'
+    return 0
+  fi
+  if [ -r /proc/stat ]; then
+    local a b
+    a="$(awk '/^cpu /{i=$5+$6; t=0; for(n=2;n<=NF;n++) t+=$n; print i, t; exit}' /proc/stat)"
+    sleep 1
+    b="$(awk '/^cpu /{i=$5+$6; t=0; for(n=2;n<=NF;n++) t+=$n; print i, t; exit}' /proc/stat)"
+    awk -v a="$a" -v b="$b" 'BEGIN{
+      split(a,x," "); split(b,y," ");
+      di = y[1]-x[1]; dt = y[2]-x[2];
+      if (dt <= 0) print "0"; else printf "%.1f", 100*(1 - di/dt) }'
+  elif has top; then
+    local idle
+    idle="$(top -l 2 -n 0 -s 1 2>/dev/null | sed -n 's/.*, *\([0-9.]*\)% idle.*/\1/p' | tail -1)"
+    [ -n "$idle" ] && awk -v i="$idle" 'BEGIN{printf "%.1f", 100-i}' || echo ""
+  fi
+}
+
+busy_processes() {
+  if ps -eo pcpu,comm --sort=-pcpu >/dev/null 2>&1; then
+    ps -eo pcpu,comm --sort=-pcpu 2>/dev/null | sed -n '2,4p'
+  else
+    ps -Ao pcpu,comm -r 2>/dev/null | sed -n '2,4p'
+  fi
+}
+
 check_idle() {
-  local load cores pct
+  local load busy
   load="$(load_1min)"
-  [ -n "$load" ] || return 0
-  cores="$CPU_THREADS"
-  pct="$(fpct "$load" "$cores")"
-  kv "load average (1m)" "$load  (${pct}% of $cores cores)"
+  busy="$(cpu_busy_pct)"
+  [ -n "$load" ] && kv "load average (1m)" "$load  ${C_DIM}(informational)${C_RESET}"
+  if [ -z "$busy" ]; then
+    kv "cpu busy" "could not sample"
+    return 0
+  fi
+  kv "cpu busy" "${busy}%  (limit ${BUSY_LIMIT_PCT}%)"
   if [ "$FORCE" -eq 1 ]; then
     return 0
   fi
-  if awk -v p="$pct" -v l="$LOAD_LIMIT_PCT" 'BEGIN{exit !(p > l)}'; then
-    printf "${C_ERR}refusing to benchmark${C_RESET}: 1-minute load is %s%% of %s cores.\n" "$pct" "$cores" >&2
-    printf "the numbers would measure the other workload as much as the machine. Use --force to override.\n" >&2
+  if awk -v p="$busy" -v l="$BUSY_LIMIT_PCT" 'BEGIN{exit !(p+0 > l+0)}'; then
+    printf "\n${C_ERR}refusing to benchmark${C_RESET}: the CPU is %s%% busy, above the %s%% limit.\n" \
+      "$busy" "$BUSY_LIMIT_PCT" >&2
+    printf "the numbers would measure that workload as much as the machine.\n" >&2
+    printf "busiest processes right now:\n" >&2
+    busy_processes | sed 's/^/  /' >&2
+    printf "raise the limit with --max-busy, or skip the check with --force.\n" >&2
     return 1
   fi
   return 0
