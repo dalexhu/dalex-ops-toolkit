@@ -127,7 +127,7 @@ with the other hosts measured the same way.
 ### Sample output
 
 ```
-================ app01 — Debian GNU/Linux 13 — x86_64 ================
+================ app01.example.internal (10.0.0.36) — Debian GNU/Linux 13 — x86_64 ================
 
 Machine
   cpu                    Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz
@@ -136,7 +136,8 @@ Machine
   memory                 32109 MiB total, 28776 MiB available
   virtualisation         kvm
   time per test          10s
-  load average (1m)      0.14  (3.5% of 4 cores)
+  load average (1m)      0.14  (informational)
+  cpu busy               2.1%  (limit 25%)
 
 Scores (100 = reference profile v1)
   TEST                         MEASURED    REFERENCE  SCORE
@@ -147,7 +148,17 @@ Scores (100 = reference profile v1)
   mutex locks/s                 2971768      2500000  118.9
 
 Composite
-  100.8   weighted geometric mean: cpu-all 30%, cpu-1 25%, memory 20%, threads 15%, mutex 10%
+  100.8   app01.example.internal  10.0.0.36
+  weighted geometric mean: cpu-all 30%, cpu-1 25%, memory 20%, threads 15%, mutex 10%
+```
+
+With `--remote`, the same identity is what the fleet summary is keyed on:
+
+```
+================ Fleet summary ================
+  HOST                   IP               CORES   RAM MiB  COMPOSITE  CPU-ALL
+  app01                  10.0.0.36            4     32035       84.2     78.1
+  db01                   10.0.1.75            8     64256      142.7    155.3
 ```
 
 ### Notes

@@ -135,8 +135,36 @@ CPU_QUOTA=""          # cgroup cpu limit, in whole cores, when one is set
 CPU_THREADS=1         # threads the tests actually use
 MEM_TOTAL_MB=0; MEM_AVAIL_MB=0; VIRT="none"; GOVERNOR=""; DISK_TYPE=""
 OS_NAME="unknown"; PKG=""; SUDO=""
+HOST_NAME=""; HOST_IP=""
 
 OS_KIND="linux"
+
+# the address the machine actually reaches the network with, not whatever
+# /etc/hosts says about the name
+primary_ip() {
+  local ip iface
+  if has ip; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)"
+  fi
+  if [ -z "$ip" ] && has hostname; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -z "$ip" ] && has route && has ipconfig; then          # macOS
+    iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')"
+    [ -n "$iface" ] && ip="$(ipconfig getifaddr "$iface" 2>/dev/null)"
+  fi
+  if [ -z "$ip" ] && has ifconfig; then
+    ip="$(ifconfig 2>/dev/null | awk '/inet /{if ($2 != "127.0.0.1") {print $2; exit}}')"
+  fi
+  echo "$ip"
+}
+
+collect_identity() {
+  HOST_NAME="$(hostname -f 2>/dev/null)"
+  [ -n "$HOST_NAME" ] || HOST_NAME="$(hostname 2>/dev/null)"
+  [ -n "$HOST_NAME" ] || HOST_NAME="host"
+  HOST_IP="$(primary_ip)"
+}
 
 detect_machine_macos() {
   OS_KIND="macos"
@@ -586,8 +614,10 @@ report() {
   fi
 
   head2 "Composite"
-  printf "  ${C_OK}%s${C_RESET}   ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex %s%%${C_RESET}\n" \
-    "$COMPOSITE" "$W_CPU_MULTI" "$W_CPU_SINGLE" "$W_MEMORY" "$W_THREADS" "$W_MUTEX"
+  printf "  ${C_OK}%s${C_RESET}   %s${C_DIM}%s${C_RESET}\n" \
+    "$COMPOSITE" "$HOST_NAME" "${HOST_IP:+  $HOST_IP}"
+  printf "  ${C_DIM}weighted geometric mean: cpu-all %s%%, cpu-1 %s%%, memory %s%%, threads %s%%, mutex %s%%${C_RESET}\n" \
+    "$W_CPU_MULTI" "$W_CPU_SINGLE" "$W_MEMORY" "$W_THREADS" "$W_MUTEX"
 }
 
 # ---------------------------------------------------------------------------
@@ -601,7 +631,7 @@ run_remote() {
     if [ ! -r "$self" ]; then
       printf "  cannot read this script (%s) to pipe it over ssh\n" "$self" >&2
       rows="$rows
-PERFCHECK-RESULT|$host|?|?|ERROR"
+PERFCHECK-RESULT|$host|-|?|?|ERROR"
       continue
     fi
     out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$host" \
@@ -610,7 +640,7 @@ PERFCHECK-RESULT|$host|?|?|ERROR"
     echo "$out" | grep -v '^PERFCHECK-RESULT|' >&2
     line="$(echo "$out" | grep '^PERFCHECK-RESULT|' | tail -1)"
     if [ -z "$line" ]; then
-      line="PERFCHECK-RESULT|$host|?|?|UNREACHABLE"
+      line="PERFCHECK-RESULT|$host|-|?|?|UNREACHABLE"
     else
       line="PERFCHECK-RESULT|$host|$(echo "$line" | cut -d'|' -f3-)"
     fi
@@ -625,9 +655,10 @@ $line"
 # ---------------------------------------------------------------------------
 LOCAL_RC=0
 detect_machine
+collect_identity
 
 printf "\n${C_HEAD}================ %s ================${C_RESET}\n" \
-  "$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) — $OS_NAME — $(uname -m)"
+  "$HOST_NAME${HOST_IP:+ ($HOST_IP)} — $OS_NAME — $(uname -m)"
 
 head2 "Machine"
 kv "cpu" "$CPU_MODEL"
@@ -655,8 +686,7 @@ else
   report
 fi
 
-HOST_LABEL="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
-LOCAL_ROW="PERFCHECK-RESULT|$HOST_LABEL|$CPU_THREADS|${MEM_TOTAL_MB}|$COMPOSITE|$S_CPU_MULTI|$S_CPU_SINGLE|$S_MEMORY|$S_THREADS|$S_MUTEX|${S_IO:-0}"
+LOCAL_ROW="PERFCHECK-RESULT|$HOST_NAME|${HOST_IP:--}|$CPU_THREADS|${MEM_TOTAL_MB}|$COMPOSITE|$S_CPU_MULTI|$S_CPU_SINGLE|$S_MEMORY|$S_THREADS|$S_MUTEX|${S_IO:-0}"
 [ "$EMIT_RESULT" -eq 1 ] && echo "$LOCAL_ROW"
 
 ROWS="$LOCAL_ROW"
@@ -668,9 +698,9 @@ fi
 
 if [ "$(echo "$ROWS" | grep -c '^PERFCHECK-RESULT|')" -gt 1 ]; then
   printf "\n${C_HEAD}================ Fleet summary ================${C_RESET}\n"
-  printf "  ${C_KEY}%-18s %6s %10s %10s %8s %8s${C_RESET}\n" "HOST" "CORES" "RAM MiB" "COMPOSITE" "CPU-ALL" "CPU-1"
-  echo "$ROWS" | while IFS='|' read -r _ h cores ram comp cmulti csingle rest; do
-    printf "  %-18s %6s %10s %10s %8s %8s\n" "$(echo "$h" | cut -c1-18)" "$cores" "$ram" "$comp" "$cmulti" "$csingle"
+  printf "  ${C_KEY}%-22s %-15s %6s %9s %10s %8s${C_RESET}\n" "HOST" "IP" "CORES" "RAM MiB" "COMPOSITE" "CPU-ALL"
+  echo "$ROWS" | while IFS='|' read -r _ h ip cores ram comp cmulti rest; do
+    printf "  %-22s %-15s %6s %9s %10s %8s\n" "$(echo "$h" | cut -c1-22)" "$ip" "$cores" "$ram" "$comp" "$cmulti"
   done
 fi
 
