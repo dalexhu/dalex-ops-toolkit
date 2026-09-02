@@ -141,11 +141,21 @@ an unstable machine. The reference is taken from the two runs that agree.
 
 Two caveats worth knowing before reading a score:
 
-- The profile was measured at 10 seconds per test while the default is now 60. The memory test
-  is the one that cares: a longer run leaves cache and the figure drops. Measured in a
-  4-core container, the median went from 78 901 MiB/s at 3 s to 55 922 MiB/s at 10 s, with the
-  coefficient of variation rising from 8.2% to 14.4% — while CPU stayed at 0.3–0.5%. The memory
-  reference is the least settled of the five for that reason.
+- The profile was measured at 10 seconds per test while the default is now 60. For CPU that
+  makes no difference; for memory it is unclear. Five repeats at each of three durations, in a
+  4-core container on a laptop that was **not idle**:
+
+  | test | 3 s | 10 s | 30 s |
+  |---|---|---|---|
+  | cpu, median events/s | 19 799 (CV 0.5%) | 19 756 (CV 0.3%) | 19 754 (CV 0.4%) |
+  | memory, median MiB/s | 78 901 (CV 8.2%) | 55 922 (CV 14.4%) | 120 235 (CV 35.6%) |
+
+  CPU repeats to within half a percent at every duration. Memory does not settle at all — the
+  median goes down and then up, and the spread widens to 36%, with individual runs between
+  57 448 and 136 679 MiB/s at 30 s. That is contention on the host, not a property of the test
+  length, and it is the clearest argument there is for the busy check. Treat memory subscores as
+  comparable only between hosts that were idle when measured; the memory reference is the least
+  settled of the five for the same reason.
 - The file I/O reference was never measured on that machine; the I/O test was not run there.
 
 The numbers are arbitrary in the sense that they only decide where 100 sits. Every one of them
@@ -342,9 +352,18 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 
 读分数之前有两点要清楚:
 
-- 基准是在**每项 10 秒**下测的,而现在默认是 60 秒。受影响的是内存测试:跑得越久越会跑出缓存,
-  数字随之下降。在一个 4 核容器里实测,中位数从 3 秒的 78 901 MiB/s 降到 10 秒的 55 922 MiB/s,
-  变异系数从 8.2% 升到 14.4% —— 同期 CPU 只有 0.3–0.5%。所以五项里内存这项最不稳。
+- 基准是在**每项 10 秒**下测的,而现在默认是 60 秒。对 CPU 没有影响;对内存则说不清。
+  在一台**并不空闲**的笔记本上、4 核容器内,三种时长各重复 5 次:
+
+  | 测试 | 3 秒 | 10 秒 | 30 秒 |
+  |---|---|---|---|
+  | cpu 中位数 events/s | 19 799(CV 0.5%) | 19 756(CV 0.3%) | 19 754(CV 0.4%) |
+  | 内存中位数 MiB/s | 78 901(CV 8.2%) | 55 922(CV 14.4%) | 120 235(CV 35.6%) |
+
+  CPU 在任何时长下都复现在 0.5% 以内。内存则**根本没有收敛** —— 中位数先降后升,离散度扩大到
+  36%,30 秒那组单次结果在 57 448 到 136 679 MiB/s 之间。这是宿主机上的争抢,不是测试时长的性质,
+  也正是繁忙守卫存在的最好理由。内存子分只应在**测量时都空闲**的机器之间比较;
+  五项里内存这项的参考值最不牢,原因也在这里。
 - 文件 I/O 的参考值**不是**在那台机器上测的,那里没跑 I/O 测试。
 
 说参考值"任意",意思是它们只决定 100 分落在哪里。每一项都可以覆盖,
