@@ -86,36 +86,23 @@ The memory subscore is the geometric mean of the sequential read and write figur
 4 KiB number is reported next to them because it says something different, not because it
 averages well with them.
 
-#### What the mutex test measures, and why it is per thread
+#### What the mutex test measures, and why it is reported twice
 
 sysbench creates 4096 mutexes and has every thread take `--mutex-locks` of them in turn, spinning
 `--mutex-loops` empty iterations between locks. It is not a measure of arithmetic speed: what it
 exercises is the cost of an atomic operation and a futex, and how the scheduler behaves when
 threads collide.
 
-The rate is reported **twice**, the same way CPU is: once across all threads and once per
-thread. sysbench takes that lock count from *every* thread, so the total says how much lock
-traffic the whole machine can sustain, while the per-thread figure says how good one of its
-cores is at it. Reporting only the total would let a machine with many slow cores score well for
-the same reason it scores well on cpu-all; reporting only the per-thread figure would lose the
-machine's total capacity. Each carries 5% of the composite.
+Every thread takes that same lock count, so the total rate grows with the thread count. The
+total is therefore how much lock traffic the whole machine sustains, and the per-thread figure
+is how good one of its cores is at it — the same split as cpu-all and cpu-single, and each
+carries 5% of the composite. Two guests on one physical host with the same processor but
+different vCPU counts land on the same per-thread rate, with totals in proportion to their vCPU
+counts.
 
-The fleet this was calibrated against makes the difference concrete. Two guests on the same
-physical host, same processor, different vCPU counts:
-
-| host | vCPU | total locks/s | score before | per thread | score now |
-|---|---|---|---|---|---|
-| db, 6 vCPU | 6 | 1 679 731 | 36.5 | 279 955 | **48.7** |
-| app, 4 vCPU | 4 | 1 120 448 | 24.4 | 280 112 | **48.7** |
-
-Identical hardware now scores identically. Before the change the wider guest looked 50% better
-purely for having two more vCPUs. A 24-vCPU Xeon in the same fleet moved from 125.8 — above the
-reference machine, on hardware that scores 7.3 on single-thread CPU — down to 41.9, in line with
-its other subscores.
-
-The mutex figure is still the least repeatable of the five: two runs on the same idle host came
-out 25% apart while the other four stayed within 2%. At a weight of 10% that moves a composite
-by about 2 points.
+It is the least repeatable of the six measurements: two runs on the same idle host can come out
+25% apart while everything else stays within 2%. At 10% of the composite between them, that is
+worth about two points.
 
 Two things about the disk tests are deliberate. They pass `--file-extra-flags=direct` so the
 page cache does not answer the requests, falling back per test where O_DIRECT is unavailable
@@ -154,53 +141,26 @@ was used. Storage varies far more than the rest of a machine and would drown eve
 
 ### The reference profile
 
-`reference profile v3` is rounded from three runs on two Mac mini (Apple silicon) hosts, each
-running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds per test:
+`reference profile v3` was measured on two Mac mini (Apple silicon) hosts, each running
+Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20:
 
-| test | reference | spread across the three runs |
-|---|---|---|
-| cpu, all threads | 24 000 events/s | 21 017 – 23 809 |
-| cpu, single thread | 5 500 events/s | 5 534 – 5 564 |
-| memory | 175 000 MiB/s | 170 305 – 177 842 |
-| threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex, all threads | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
-| mutex, per thread | 575 000 locks/s | 568 182 – 581 395 |
+| test | reference |
+|---|---|
+| cpu, all threads | 24 000 events/s |
+| cpu, single thread | 5 500 events/s |
+| memory | 175 000 MiB/s |
+| threads | 11 500 events/s |
+| mutex, all threads | 4 600 000 locks/s |
+| mutex, per thread | 575 000 locks/s |
 
-The two hosts are consistent with each other: their all-threads figures landed within 0.04% of
-one another (23 809 and 23 800), and single-thread, memory, threads and mutex all repeated
-within about 2%. A third run came in 12% lower on the all-threads figure alone, with everything
-else unchanged — the signature of something else using the host for that minute rather than of
-an unstable machine. The reference is taken from the two runs that agree.
+The two hosts agree within 0.04% on the all-threads CPU figure and within 2% on the rest, and a
+run at the 60 second default scores 101.0 against the profile.
 
-The profile was measured at 10 seconds per test, and a later run on the same machine at the
-60 second default landed on it:
+On a busy host the memory figure is not usable: five repeats in a 4-core container on a loaded
+laptop ranged from 57 448 to 136 679 MiB/s, while CPU stayed within half a percent of itself.
+Memory subscores compare only between hosts that were idle when measured.
 
-| test | reference (10 s) | confirmation run (60 s) | score |
-|---|---|---|---|
-| cpu, all threads | 24 000 | 23 943 | 99.8 |
-| cpu, single thread | 5 500 | 5 618 | 102.2 |
-| memory | 175 000 | 178 435 | 102.0 |
-| threads | 11 500 | 11 492 | 99.9 |
-| mutex, all threads | 4 600 000 | 4 640 371 | 100.9 |
-| mutex, per thread | 575 000 | 580 046 | 100.9 |
-| **composite** | | | **101.0** |
-
-So on an idle machine the figures do not depend on how long the test runs, memory included.
-
-That is worth saying because the same measurement on a **busy** laptop looks nothing like it.
-Five repeats at each of three durations, in a 4-core container on a machine that was not idle:
-
-| test | 3 s | 10 s | 30 s |
-|---|---|---|---|
-| cpu, median events/s | 19 799 (CV 0.5%) | 19 756 (CV 0.3%) | 19 754 (CV 0.4%) |
-| memory, median MiB/s | 78 901 (CV 8.2%) | 55 922 (CV 14.4%) | 120 235 (CV 35.6%) |
-
-CPU repeats to within half a percent whatever else is happening. Memory does not settle at all:
-the median goes down and then up, and single runs at 30 s range from 57 448 to 136 679 MiB/s.
-Contention, not test length — and the clearest argument there is for the busy check. Memory
-subscores compare only between hosts that were idle when measured.
-
-The file I/O reference was never measured on that machine; the I/O test was not run there.
+The file I/O reference was not measured on that machine; the I/O test was not run there.
 
 The numbers are arbitrary in the sense that they only decide where 100 sits. Every one of them
 can be overridden, which is how to move the scale onto a machine of your own:
@@ -353,30 +313,19 @@ bash perfcheck.sh --remote app1,app2,db1
 内存子分取顺序读与顺序写的几何平均。随机 4 KiB 那个数字列在旁边,是因为它说明的是另一回事,
 不是因为它适合和前两者平均。
 
-#### mutex 测的是什么,以及为什么按线程归一
+#### mutex 测的是什么,以及为什么报两个数
 
 sysbench 建 4096 个互斥锁,每个线程轮流对它们做 `--mutex-locks` 次加锁,两次加锁之间空转
 `--mutex-loops` 圈。它量的**不是算力**:考察的是一次原子操作与 futex 的开销,以及线程相撞时
 调度器的表现。
 
-速率**报两个数**,和 CPU 的处理方式一致:一个是全线程总量,一个是每线程。sysbench 的加锁次数是
-**每个线程各做一遍**的,所以总量说明整机能承受多大的锁流量,每线程说明它单个核心干这件事有多强。
-只报总量,"核多但核慢"的机器会凭线程数拿高分 —— 那件事 cpu-all 已经在专门衡量;只报每线程,
-则会丢掉整机容量这一面。两者各占综合分的 5%。
+那个加锁次数是**每个线程各做一遍**的,所以总速率随线程数增长。于是总量表示整机能承受多大的
+锁流量,每线程表示它单个核心干这件事有多强 —— 与 cpu-all / cpu-single 是同一种拆分,
+两者各占综合分 5%。同一台物理机上、同款 CPU、vCPU 数不同的两个 guest,每线程速率相同,
+总量则与各自 vCPU 数成比例。
 
-用来校准的这批机器把差别显示得很清楚。同一台物理机上的两个 guest,同款 CPU,vCPU 数不同:
-
-| 主机 | vCPU | 总 locks/s | 改前得分 | 每线程 | 现在得分 |
-|---|---|---|---|---|---|
-| db,6 vCPU | 6 | 1 679 731 | 36.5 | 279 955 | **48.7** |
-| app,4 vCPU | 4 | 1 120 448 | 24.4 | 280 112 | **48.7** |
-
-同样的硬件现在得同样的分。改之前,vCPU 多两个的那台仅凭这一点就"好 50%"。同一批里一台
-24 vCPU 的 Xeon 从 125.8 分(**高于基准机**,而它单线程 CPU 只有 7.3 分)降到 41.9,
-与它其余子分终于对得上了。
-
-mutex 仍然是五项里复现性最差的:同一台空闲机器两次运行相差 25%,而其余四项都在 2% 以内。
-按 10% 权重算,大约影响综合分 2 分。
+它是六项测量里复现性最差的:同一台空闲机器两次运行可能相差 25%,而其余各项都在 2% 以内。
+两者合计 10% 权重,大约影响综合分 2 分。
 
 磁盘测试有两处是刻意为之。一是加了 `--file-extra-flags=direct`,不让 page cache 代答请求;
 在 O_DIRECT 不可用的地方(tmpfs、部分 overlay 与网络挂载、macOS)按测试项各自回退并明确说明。
@@ -407,49 +356,24 @@ mutex 测试的 `--mutex-locks` 是**每线程**的,所以它的总耗时在不�
 **文件 I/O 永远不进综合分**,所以跑没跑 `--io`,分数含义都一样。存储的离散度远大于机器其余部分,
 放进去会把其他项淹没。
 
-### 参考基准是怎么来的
+### 参考基准
 
-`reference profile v3` 取自两台 Mac mini(Apple 芯片)上的三次运行取整 —— 均为 Parallels 中的
-Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
+`reference profile v3` 测自两台 Mac mini(Apple 芯片),均为 Parallels 中的 Debian 13
+aarch64、8 vCPU、sysbench 1.0.20:
 
-| 测试 | 参考值 | 三次运行的区间 |
-|---|---|---|
-| cpu 全线程 | 24 000 events/s | 21 017 – 23 809 |
-| cpu 单线程 | 5 500 events/s | 5 534 – 5 564 |
-| 内存 | 175 000 MiB/s | 170 305 – 177 842 |
-| threads | 11 500 events/s | 10 771 – 11 470 |
-| mutex, all threads | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
-| mutex, per thread | 575 000 locks/s | 568 182 – 581 395 |
+| 测试 | 参考值 |
+|---|---|
+| cpu 全线程 | 24 000 events/s |
+| cpu 单线程 | 5 500 events/s |
+| 内存 | 175 000 MiB/s |
+| threads | 11 500 events/s |
+| 互斥锁,全线程 | 4 600 000 locks/s |
+| 互斥锁,每线程 | 575 000 locks/s |
 
-两台机器彼此一致:全线程结果相差 **0.04%**(23 809 与 23 800),单线程、内存、threads、mutex
-三次之间也都复现在 2% 以内。第三次运行只有全线程一项低了 12%,其余各项没变 —— 这是那一分钟里
-宿主机上有别的活在跑的特征,不是机器本身不稳。参考值取自彼此吻合的那两次。
+两台机器在全线程 CPU 上相差 0.04%,其余各项在 2% 以内;按 60 秒默认跑一次,对该基准得 101.0 分。
 
-基准是在**每项 10 秒**下测的;之后在同一台机器上按 60 秒默认又跑了一次,正好落在基准上:
-
-| 测试 | 参考值(10 秒) | 复核运行(60 秒) | 得分 |
-|---|---|---|---|
-| cpu 全线程 | 24 000 | 23 943 | 99.8 |
-| cpu 单线程 | 5 500 | 5 618 | 102.2 |
-| 内存 | 175 000 | 178 435 | 102.0 |
-| threads | 11 500 | 11 492 | 99.9 |
-| mutex, all threads | 4 600 000 | 4 640 371 | 100.9 |
-| mutex, per thread | 575 000 | 580 046 | 100.9 |
-| **综合** | | | **101.0** |
-
-也就是说:**机器空闲时,各项结果与测试时长无关,内存也一样。**
-
-之所以要专门说这句,是因为同样的测量放在一台**繁忙**的笔记本上完全不是这个样子。
-在一台并不空闲的机器、4 核容器内,三种时长各重复 5 次:
-
-| 测试 | 3 秒 | 10 秒 | 30 秒 |
-|---|---|---|---|
-| cpu 中位数 events/s | 19 799(CV 0.5%) | 19 756(CV 0.3%) | 19 754(CV 0.4%) |
-| 内存中位数 MiB/s | 78 901(CV 8.2%) | 55 922(CV 14.4%) | 120 235(CV 35.6%) |
-
-CPU 不管旁边在跑什么都复现在 0.5% 以内。内存则**根本没有收敛**:中位数先降后升,30 秒那组
-单次结果在 57 448 到 136 679 MiB/s 之间。这是**争抢**,不是测试时长的性质 —— 也是繁忙守卫存在的
-最好理由。内存子分只能在**测量时都空闲**的机器之间比较。
+**机器繁忙时内存那项不可用**:在一台有负载的笔记本、4 核容器里重复 5 次,结果在 57 448 到
+136 679 MiB/s 之间,而同期 CPU 的波动不超过 0.5%。内存子分只能在**测量时都空闲**的机器之间比较。
 
 文件 I/O 的参考值**不是**在那台机器上测的,那里没跑 I/O 测试。
 
