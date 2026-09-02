@@ -210,9 +210,8 @@ REF_CPU_MULTI="${PERFCHECK_REF_CPU_MULTI:-24000}"      # events/s, all threads
 REF_CPU_SINGLE="${PERFCHECK_REF_CPU_SINGLE:-5500}"     # events/s, one thread
 REF_THREADS="${PERFCHECK_REF_THREADS:-11500}"          # events/s, scheduler test
 REF_MUTEX="${PERFCHECK_REF_MUTEX:-4600000}"            # mutex locks/s
-# Measured at 10s per test. The memory figure falls as the run lengthens - short
-# runs stay inside cache - so this one is the least settled of the five and is
-# worth re-measuring at the 60s default.
+# Confirmed at the 60s default on the same machine: 178435 MiB/s against the
+# 175000 taken from the 10s runs, 2% apart.
 REF_MEMORY="${PERFCHECK_REF_MEMORY:-175000}"           # MiB/s, 1M blocks
 # Not measured on the reference machine; the I/O test was not run there.
 REF_IO_IOPS="${PERFCHECK_REF_IO_IOPS:-3000}"           # random read+write ops/s
@@ -239,9 +238,8 @@ is never part of it.
   mutex               ${REF_MUTEX} locks/s         ${W_MUTEX}%      PERFCHECK_REF_MUTEX
   file I/O            ${REF_IO_IOPS} IOPS               -       PERFCHECK_REF_IO_IOPS
 
-The four CPU, threads and mutex figures come from two Mac minis that agreed
-within 2% of each other. The memory figure was taken from a 10 second run and
-falls as the run lengthens, so it is the least settled of the five. The file I/O
+The figures come from two Mac minis that agreed within 2% of each other, and a
+later run at the 60 second default scored 101.0 against them. The file I/O
 figure was not measured on that machine at all.
 
 The reference numbers are arbitrary and only decide where 100 sits. A score is a
@@ -876,8 +874,8 @@ report_composite() {
         inst_label="bare metal"
         inst_desc="$CPU_THREADS threads used | $mem_desc" ;;
       *)
-        inst_label="$VIRT guest"
-        inst_desc="$CPU_THREADS vCPU used | $mem_desc" ;;
+        inst_label="$VIRT"
+        inst_desc="guest, $CPU_THREADS vCPU used | $mem_desc" ;;
     esac
   fi
   [ -n "$GOVERNOR" ] && inst_desc="$inst_desc | governor $GOVERNOR"
