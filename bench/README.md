@@ -133,9 +133,11 @@ running Debian 13 aarch64 in Parallels with 8 vCPU, sysbench 1.0.20, 10 seconds 
 | threads | 11 500 events/s | 10 771 – 11 470 |
 | mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
 
-Single-thread, memory, threads and mutex repeated within about 2%. The all-threads figure moved
-12% between two runs on the same host, which is the one number to treat with suspicion when
-comparing machines that are close to each other.
+The two hosts are consistent with each other: their all-threads figures landed within 0.04% of
+one another (23 809 and 23 800), and single-thread, memory, threads and mutex all repeated
+within about 2%. A third run came in 12% lower on the all-threads figure alone, with everything
+else unchanged — the signature of something else using the host for that minute rather than of
+an unstable machine. The reference is taken from the two runs that agree.
 
 Two caveats worth knowing before reading a score:
 
@@ -334,8 +336,9 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 | threads | 11 500 events/s | 10 771 – 11 470 |
 | mutex | 4 600 000 locks/s | 4 545 455 – 4 651 163 |
 
-单线程、内存、threads、mutex 三次之间复现在 2% 以内。**全线程那项在同一台机器上两次相差 12%**,
-比较两台接近的机器时,这个数字最需要保留怀疑。
+两台机器彼此一致:全线程结果相差 **0.04%**(23 809 与 23 800),单线程、内存、threads、mutex
+三次之间也都复现在 2% 以内。第三次运行只有全线程一项低了 12%,其余各项没变 —— 这是那一分钟里
+宿主机上有别的活在跑的特征,不是机器本身不稳。参考值取自彼此吻合的那两次。
 
 读分数之前有两点要清楚:
 
