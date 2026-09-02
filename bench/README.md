@@ -139,24 +139,34 @@ within about 2%. A third run came in 12% lower on the all-threads figure alone, 
 else unchanged — the signature of something else using the host for that minute rather than of
 an unstable machine. The reference is taken from the two runs that agree.
 
-Two caveats worth knowing before reading a score:
+The profile was measured at 10 seconds per test, and a later run on the same machine at the
+60 second default landed on it:
 
-- The profile was measured at 10 seconds per test while the default is now 60. For CPU that
-  makes no difference; for memory it is unclear. Five repeats at each of three durations, in a
-  4-core container on a laptop that was **not idle**:
+| test | reference (10 s) | confirmation run (60 s) | score |
+|---|---|---|---|
+| cpu, all threads | 24 000 | 23 943 | 99.8 |
+| cpu, single thread | 5 500 | 5 618 | 102.2 |
+| memory | 175 000 | 178 435 | 102.0 |
+| threads | 11 500 | 11 492 | 99.9 |
+| mutex | 4 600 000 | 4 640 371 | 100.9 |
+| **composite** | | | **101.0** |
 
-  | test | 3 s | 10 s | 30 s |
-  |---|---|---|---|
-  | cpu, median events/s | 19 799 (CV 0.5%) | 19 756 (CV 0.3%) | 19 754 (CV 0.4%) |
-  | memory, median MiB/s | 78 901 (CV 8.2%) | 55 922 (CV 14.4%) | 120 235 (CV 35.6%) |
+So on an idle machine the figures do not depend on how long the test runs, memory included.
 
-  CPU repeats to within half a percent at every duration. Memory does not settle at all — the
-  median goes down and then up, and the spread widens to 36%, with individual runs between
-  57 448 and 136 679 MiB/s at 30 s. That is contention on the host, not a property of the test
-  length, and it is the clearest argument there is for the busy check. Treat memory subscores as
-  comparable only between hosts that were idle when measured; the memory reference is the least
-  settled of the five for the same reason.
-- The file I/O reference was never measured on that machine; the I/O test was not run there.
+That is worth saying because the same measurement on a **busy** laptop looks nothing like it.
+Five repeats at each of three durations, in a 4-core container on a machine that was not idle:
+
+| test | 3 s | 10 s | 30 s |
+|---|---|---|---|
+| cpu, median events/s | 19 799 (CV 0.5%) | 19 756 (CV 0.3%) | 19 754 (CV 0.4%) |
+| memory, median MiB/s | 78 901 (CV 8.2%) | 55 922 (CV 14.4%) | 120 235 (CV 35.6%) |
+
+CPU repeats to within half a percent whatever else is happening. Memory does not settle at all:
+the median goes down and then up, and single runs at 30 s range from 57 448 to 136 679 MiB/s.
+Contention, not test length — and the clearest argument there is for the busy check. Memory
+subscores compare only between hosts that were idle when measured.
+
+The file I/O reference was never measured on that machine; the I/O test was not run there.
 
 The numbers are arbitrary in the sense that they only decide where 100 sits. Every one of them
 can be overridden, which is how to move the scale onto a machine of your own:
@@ -354,21 +364,32 @@ Debian 13 aarch64、8 vCPU、sysbench 1.0.20、每项 10 秒:
 三次之间也都复现在 2% 以内。第三次运行只有全线程一项低了 12%,其余各项没变 —— 这是那一分钟里
 宿主机上有别的活在跑的特征,不是机器本身不稳。参考值取自彼此吻合的那两次。
 
-读分数之前有两点要清楚:
+基准是在**每项 10 秒**下测的;之后在同一台机器上按 60 秒默认又跑了一次,正好落在基准上:
 
-- 基准是在**每项 10 秒**下测的,而现在默认是 60 秒。对 CPU 没有影响;对内存则说不清。
-  在一台**并不空闲**的笔记本上、4 核容器内,三种时长各重复 5 次:
+| 测试 | 参考值(10 秒) | 复核运行(60 秒) | 得分 |
+|---|---|---|---|
+| cpu 全线程 | 24 000 | 23 943 | 99.8 |
+| cpu 单线程 | 5 500 | 5 618 | 102.2 |
+| 内存 | 175 000 | 178 435 | 102.0 |
+| threads | 11 500 | 11 492 | 99.9 |
+| mutex | 4 600 000 | 4 640 371 | 100.9 |
+| **综合** | | | **101.0** |
 
-  | 测试 | 3 秒 | 10 秒 | 30 秒 |
-  |---|---|---|---|
-  | cpu 中位数 events/s | 19 799(CV 0.5%) | 19 756(CV 0.3%) | 19 754(CV 0.4%) |
-  | 内存中位数 MiB/s | 78 901(CV 8.2%) | 55 922(CV 14.4%) | 120 235(CV 35.6%) |
+也就是说:**机器空闲时,各项结果与测试时长无关,内存也一样。**
 
-  CPU 在任何时长下都复现在 0.5% 以内。内存则**根本没有收敛** —— 中位数先降后升,离散度扩大到
-  36%,30 秒那组单次结果在 57 448 到 136 679 MiB/s 之间。这是宿主机上的争抢,不是测试时长的性质,
-  也正是繁忙守卫存在的最好理由。内存子分只应在**测量时都空闲**的机器之间比较;
-  五项里内存这项的参考值最不牢,原因也在这里。
-- 文件 I/O 的参考值**不是**在那台机器上测的,那里没跑 I/O 测试。
+之所以要专门说这句,是因为同样的测量放在一台**繁忙**的笔记本上完全不是这个样子。
+在一台并不空闲的机器、4 核容器内,三种时长各重复 5 次:
+
+| 测试 | 3 秒 | 10 秒 | 30 秒 |
+|---|---|---|---|
+| cpu 中位数 events/s | 19 799(CV 0.5%) | 19 756(CV 0.3%) | 19 754(CV 0.4%) |
+| 内存中位数 MiB/s | 78 901(CV 8.2%) | 55 922(CV 14.4%) | 120 235(CV 35.6%) |
+
+CPU 不管旁边在跑什么都复现在 0.5% 以内。内存则**根本没有收敛**:中位数先降后升,30 秒那组
+单次结果在 57 448 到 136 679 MiB/s 之间。这是**争抢**,不是测试时长的性质 —— 也是繁忙守卫存在的
+最好理由。内存子分只能在**测量时都空闲**的机器之间比较。
+
+文件 I/O 的参考值**不是**在那台机器上测的,那里没跑 I/O 测试。
 
 说参考值"任意",意思是它们只决定 100 分落在哪里。每一项都可以覆盖,
 这也是把标尺移到你自己某台基准机上的方式:
