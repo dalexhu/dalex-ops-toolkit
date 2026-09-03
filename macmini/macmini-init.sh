@@ -308,7 +308,18 @@ su_key() {   # <domain> <key> <label> <want 0|1>
 }
 # Check + download so patches are staged and visible, but never install: an
 # unattended install reboots the Mac and takes every VM on it down.
-su_key "$SU_DOMAIN" AutomaticCheckEnabled            "check for updates"          1
+# AutomaticCheckEnabled is often absent from the plist while checking is on (the OS
+# default), so ask softwareupdate itself rather than trusting the key.
+SU_SCHED="$(softwareupdate --schedule 2>/dev/null)"
+case "$SU_SCHED" in
+  *"turned on"*)  row OK "check for updates" "on" ;;
+  *"turned off"*)
+    if [ "$MODE" = "apply" ]; then
+      if sudo_run softwareupdate --schedule on; then row DONE "check for updates" "off -> on"
+      else row FAIL "check for updates" "off"; fi
+    else row FIX "check for updates" "off" "want on"; fi ;;
+  *) row INFO "check for updates" "unknown" "softwareupdate --schedule gave no answer" ;;
+esac
 su_key "$SU_DOMAIN" AutomaticDownload                "download updates"           $(( 1 - NO_DOWNLOAD ))
 su_key "$SU_DOMAIN" AutomaticallyInstallMacOSUpdates "install macOS updates"      0
 if [ "$KEEP_SECURITY" -eq 1 ]; then
@@ -318,9 +329,6 @@ else
   su_key "$SU_DOMAIN" CriticalUpdateInstall "install security responses" 0
 fi
 su_key "$CO_DOMAIN" AutoUpdate "App Store auto-update" 0
-if [ "$MODE" = "apply" ]; then
-  sudo_run softwareupdate --schedule on
-fi
 LAST_INSTALL="$(defaults read "$SU_DOMAIN" InstallDateDictionary 2>/dev/null | grep -E '^ +"?[0-9A-Za-z]+"? = ' | sort -t'"' -k2 | tail -1 \
   | sed -E 's/^ *"?([0-9A-Za-z]+)"? = "([^"]+)";.*/\1 on \2/')"
 [ -n "$LAST_INSTALL" ] && row INFO "last OS update installed" "$LAST_INSTALL"
