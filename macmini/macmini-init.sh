@@ -14,13 +14,15 @@
 
 set -uo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
 TZ_WANT=""
 FIREWALL_WANT=""      # "" | on | off
-AUTOLOGIN_USER=""
+AUTOLOGIN_USER=""     # default: the login user (set after parsing); --no-autologin skips it
+NO_AUTOLOGIN=0
+LOCK_MIN=5            # screen saver after N minutes, lock engages at once; 0 = never lock
 INSTALL_VM=""         # "" | parallels | vmware-fusion | utm
 KEEP_WIFI=0
 KEEP_SECURITY=0       # keep ConfigDataInstall / CriticalUpdateInstall on
@@ -42,7 +44,9 @@ What it checks / sets:
                autorestart (after power loss), womp (wake on LAN), ttyskeepawake,
                tcpkeepalive = 1
   keepawake    a per-user LaunchAgent running `caffeinate -dimsu` forever
-  screensaver  idle time 0
+  lock         screen saver after --lock minutes (default 5) and the lock engages at
+               once: an idle console locks in 5 minutes while the session, the VMs and
+               caffeinate keep running. --lock 0 disables both.
   updates      macOS updates: check + download ON, install OFF (no unattended
                reboots); security responses OFF; App Store auto-update OFF
   wifi         Wi-Fi radio off (the server lives on Ethernet)
@@ -51,10 +55,12 @@ What it checks / sets:
   banner       login window shows "<hostname> | <ip>" so a console shows which box it is
   hostname     HostName / LocalHostName / ComputerName (only with --hostname)
   timezone     system time zone (only with --timezone)
-  ntp          "set date and time automatically" on (reading it needs sudo: in check
-               mode run `sudo -v` first, otherwise it is reported as unknown)
+  ntp          "set date and time automatically" on
   firewall     application firewall (only with --firewall)
-  autologin    automatic login for the VM owner (only with --autologin)
+  autologin    automatic login for the login user, so VMs that start at login come
+               back after a power cut. On by default; --no-autologin skips it. Needs
+               FileVault off. --apply asks for the account password once (typed
+               locally, handed to sysadminctl for auto-login and the lock, never stored).
   filevault    reported; On blocks auto-login and unattended reboots
   hypervisor   Parallels / VMware Fusion / UTM / OrbStack present (install with --install-vm)
   updaters     third-party auto-updaters (Google Keystone etc.) — reported only
@@ -64,8 +70,9 @@ Options:
   --hostname <name>         Expected host name; set with --apply
   --timezone <IANA>         Expected time zone, e.g. America/Phoenix; set with --apply
   --firewall on|off         Expected application firewall state; set with --apply
-  --autologin <user>        Expect automatic login for <user>; with --apply prompts for the
-                            account password (typed locally, never stored by the script)
+  --autologin <user>        Account for automatic login (default: the user running this)
+  --no-autologin            Do not expect / set automatic login
+  --lock <minutes>          Idle minutes before the screen saver + lock (default 5; 0 = never)
   --install-vm <name>       With --apply, `brew install --cask <name>` when no hypervisor
                             is present: parallels | vmware-fusion | utm
   --keep-wifi               Do not expect / turn off Wi-Fi
@@ -96,6 +103,9 @@ while [ $# -gt 0 ]; do
     --firewall=*)   FIREWALL_WANT="${1#*=}"; REMOTE_ARGS+=("$1") ;;
     --autologin)    need_value "$@"; AUTOLOGIN_USER="$2"; REMOTE_ARGS+=("$1" "$2"); shift ;;
     --autologin=*)  AUTOLOGIN_USER="${1#*=}"; REMOTE_ARGS+=("$1") ;;
+    --no-autologin) NO_AUTOLOGIN=1; REMOTE_ARGS+=("$1") ;;
+    --lock)         need_value "$@"; LOCK_MIN="$2"; REMOTE_ARGS+=("$1" "$2"); shift ;;
+    --lock=*)       LOCK_MIN="${1#*=}"; REMOTE_ARGS+=("$1") ;;
     --install-vm)   need_value "$@"; INSTALL_VM="$2"; REMOTE_ARGS+=("$1" "$2"); shift ;;
     --install-vm=*) INSTALL_VM="${1#*=}"; REMOTE_ARGS+=("$1") ;;
     --keep-wifi)    KEEP_WIFI=1; REMOTE_ARGS+=("$1") ;;
@@ -113,6 +123,8 @@ while [ $# -gt 0 ]; do
 done
 
 case "$FIREWALL_WANT" in ''|on|off) ;; *) echo "--firewall must be on or off" >&2; exit 2 ;; esac
+case "$LOCK_MIN" in ''|*[!0-9]*) echo "--lock must be a number of minutes" >&2; exit 2 ;; esac
+[ -n "$AUTOLOGIN_USER" ] || AUTOLOGIN_USER="$(id -un)"
 case "$INSTALL_VM" in ''|parallels|vmware-fusion|utm) ;;
   *) echo "--install-vm must be parallels, vmware-fusion or utm" >&2; exit 2 ;; esac
 
@@ -198,6 +210,20 @@ fi
 run()  { "$@" >/dev/null 2>&1; }
 sudo_run() { sudo "$@" >/dev/null 2>&1; }
 
+# The account password is needed by sysadminctl for auto-login and the screen lock.
+# Ask once, on the tty, keep it only in this process, and clear it at the end.
+PW=""; PW_ASKED=0
+ask_pw() {
+  if [ "$PW_ASKED" -eq 0 ]; then
+    PW_ASKED=1
+    if [ -t 0 ]; then
+      printf "  password for %s (for sysadminctl auto-login / screen lock; used now, not stored): " "$AUTOLOGIN_USER"
+      read -rs PW; echo
+    fi
+  fi
+  [ -n "$PW" ]
+}
+
 # ---------------------------------------------------------------------------
 # header
 # ---------------------------------------------------------------------------
@@ -275,17 +301,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. screen saver
+# 3. screen saver + lock
+#    caffeinate keeps the display awake, so the only thing that can lock an idle
+#    console is the screen saver: start it after --lock minutes, lock at once.
 # ---------------------------------------------------------------------------
-head2 "screen saver"
+head2 "screen saver + lock"
+LOCK_SECS=$(( LOCK_MIN * 60 ))
 SS_IDLE="$(defaults -currentHost read com.apple.screensaver idleTime 2>/dev/null)"
-if [ "$SS_IDLE" = "0" ]; then
-  row OK "screensaver idleTime" "0"
+if [ "$SS_IDLE" = "$LOCK_SECS" ]; then
+  row OK "screensaver idleTime" "$SS_IDLE" "$( [ "$LOCK_MIN" -gt 0 ] && echo "starts after $LOCK_MIN min" || echo never )"
 elif [ "$MODE" = "apply" ]; then
-  if run defaults -currentHost write com.apple.screensaver idleTime -int 0; then row DONE "screensaver idleTime" "${SS_IDLE:-default} -> 0"
+  if run defaults -currentHost write com.apple.screensaver idleTime -int "$LOCK_SECS"; then row DONE "screensaver idleTime" "${SS_IDLE:-default} -> $LOCK_SECS"
   else row FAIL "screensaver idleTime" "${SS_IDLE:-default}"; fi
 else
-  row FIX "screensaver idleTime" "${SS_IDLE:-default (20 min)}" "want 0"
+  row FIX "screensaver idleTime" "${SS_IDLE:-default (1200)}" "want $LOCK_SECS"
+fi
+
+SL_RAW="$(sysadminctl -screenLock status 2>&1)"
+case "$SL_RAW" in
+  *immediate*)   SL_CUR="immediate" ;;
+  *seconds*)     SL_CUR="$(printf '%s' "$SL_RAW" | sed -E 's/.*delay is ([0-9]+) seconds.*/\1s/')" ;;
+  *off*|*OFF*)   SL_CUR="off" ;;
+  *)             SL_CUR="unknown" ;;
+esac
+if [ "$LOCK_MIN" -eq 0 ]; then
+  row INFO "screen lock" "$SL_CUR" "--lock 0: not managed"
+elif [ "$SL_CUR" = "immediate" ]; then
+  row OK "screen lock" "immediate" "locks when the screen saver starts"
+elif [ "$MODE" = "apply" ]; then
+  if ! ask_pw; then row FAIL "screen lock" "$SL_CUR" "needs the account password on a tty"
+  elif run sysadminctl -screenLock immediate -password "$PW"; then row DONE "screen lock" "$SL_CUR -> immediate"
+  else row FAIL "screen lock" "$SL_CUR" "sysadminctl -screenLock refused (wrong password?)"; fi
+else
+  row FIX "screen lock" "$SL_CUR" "want immediate"
 fi
 
 # ---------------------------------------------------------------------------
@@ -435,21 +483,16 @@ else
   row INFO "time zone" "${TZ_CUR:-?}" "pass --timezone to enforce"
 fi
 
-# network time: systemsetup needs root even to read it, so only report when sudo
-# is already usable (apply mode, or the user ran `sudo -v` before a check).
-NTP_STATE=""; NTP_SERVER=""
-if sudo -n true 2>/dev/null; then
-  NTP_STATE="$(sudo -n systemsetup -getusingnetworktime 2>/dev/null)"
-  NTP_SERVER="$(sudo -n systemsetup -getnetworktimeserver 2>/dev/null | sed 's/^Network Time Server: *//')"
-fi
-case "$NTP_STATE" in
-  *On*)  row OK "network time (ntp)" "on" "$NTP_SERVER" ;;
-  *Off*)
+# network time: sysadminctl can read it without root; turning it on needs sudo.
+NTP_RAW="$(sysadminctl -automaticTime status 2>&1)"
+case "$NTP_RAW" in
+  *enabled*)  row OK "network time (ntp)" "on" ;;
+  *disabled*)
     if [ "$MODE" = "apply" ]; then
-      if sudo_run systemsetup -setusingnetworktime on; then row DONE "network time (ntp)" "off -> on" "$NTP_SERVER"
+      if sudo_run sysadminctl -automaticTime on; then row DONE "network time (ntp)" "off -> on"
       else row FAIL "network time (ntp)" "off"; fi
     else row FIX "network time (ntp)" "off" "want on"; fi ;;
-  *)     row INFO "network time (ntp)" "unknown" "needs sudo to read: run sudo -v first, or --apply" ;;
+  *)          row INFO "network time (ntp)" "unknown" "$(printf '%s' "$NTP_RAW" | tail -1)" ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -479,26 +522,21 @@ case "$FV" in
 esac
 
 AL_USER="$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)"
-if [ -n "$AUTOLOGIN_USER" ]; then
-  if [ "$AL_USER" = "$AUTOLOGIN_USER" ] && [ -e /etc/kcpassword ]; then
-    row OK "auto-login" "$AL_USER"
-  elif [ "$MODE" = "apply" ]; then
-    if [ -t 0 ]; then
-      printf "  password for %s (for sysadminctl -autologin, not stored): " "$AUTOLOGIN_USER"
-      read -rs AL_PW; echo
-      if printf '%s' "$AL_PW" | sudo sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password - >/dev/null 2>&1; then
+if [ "$NO_AUTOLOGIN" -eq 1 ]; then
+  row INFO "auto-login" "${AL_USER:-off}" "--no-autologin: not managed"
+elif [ "$AL_USER" = "$AUTOLOGIN_USER" ] && [ -e /etc/kcpassword ]; then
+  row OK "auto-login" "$AL_USER" "VMs that start at login survive a reboot"
+elif [ "$MODE" = "apply" ]; then
+  case "$FV" in
+    *"is On"*) row FAIL "auto-login" "${AL_USER:-off}" "turn FileVault off first (sudo fdesetup disable)" ;;
+    *)
+      if ! ask_pw; then row FAIL "auto-login" "${AL_USER:-off}" "needs the account password on a tty"
+      elif sudo sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1; then
         row DONE "auto-login" "${AL_USER:-off} -> $AUTOLOGIN_USER"
-      else row FAIL "auto-login" "${AL_USER:-off}" "sysadminctl refused (wrong password / FileVault on?)"; fi
-      unset AL_PW
-    else
-      row FAIL "auto-login" "${AL_USER:-off}" "needs a tty to read the password"
-    fi
-  else
-    row FIX "auto-login" "${AL_USER:-off}" "want $AUTOLOGIN_USER"
-  fi
+      else row FAIL "auto-login" "${AL_USER:-off}" "sysadminctl -autologin refused (wrong password?)"; fi ;;
+  esac
 else
-  if [ -n "$AL_USER" ]; then row INFO "auto-login" "$AL_USER"
-  else row WARN "auto-login" "off" "VMs set to start at login will not come back after a reboot; see --autologin"; fi
+  row FIX "auto-login" "${AL_USER:-off}" "want $AUTOLOGIN_USER"
 fi
 
 # ---------------------------------------------------------------------------
@@ -549,6 +587,7 @@ else row OK "launch agents" "none found"; fi
 # ---------------------------------------------------------------------------
 # summary
 # ---------------------------------------------------------------------------
+PW=""; unset PW
 echo
 if [ "$MODE" = "apply" ]; then
   if [ "$N_FAIL" -eq 0 ]; then
