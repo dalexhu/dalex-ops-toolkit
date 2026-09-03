@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -51,6 +51,8 @@ What it checks / sets:
   banner       login window shows "<hostname> | <ip>" so a console shows which box it is
   hostname     HostName / LocalHostName / ComputerName (only with --hostname)
   timezone     system time zone (only with --timezone)
+  ntp          "set date and time automatically" on (reading it needs sudo: in check
+               mode run `sudo -v` first, otherwise it is reported as unknown)
   firewall     application firewall (only with --firewall)
   autologin    automatic login for the VM owner (only with --autologin)
   filevault    reported; On blocks auto-login and unattended reboots
@@ -432,6 +434,23 @@ if [ -n "$TZ_WANT" ]; then
 else
   row INFO "time zone" "${TZ_CUR:-?}" "pass --timezone to enforce"
 fi
+
+# network time: systemsetup needs root even to read it, so only report when sudo
+# is already usable (apply mode, or the user ran `sudo -v` before a check).
+NTP_STATE=""; NTP_SERVER=""
+if sudo -n true 2>/dev/null; then
+  NTP_STATE="$(sudo -n systemsetup -getusingnetworktime 2>/dev/null)"
+  NTP_SERVER="$(sudo -n systemsetup -getnetworktimeserver 2>/dev/null | sed 's/^Network Time Server: *//')"
+fi
+case "$NTP_STATE" in
+  *On*)  row OK "network time (ntp)" "on" "$NTP_SERVER" ;;
+  *Off*)
+    if [ "$MODE" = "apply" ]; then
+      if sudo_run systemsetup -setusingnetworktime on; then row DONE "network time (ntp)" "off -> on" "$NTP_SERVER"
+      else row FAIL "network time (ntp)" "off"; fi
+    else row FIX "network time (ntp)" "off" "want on"; fi ;;
+  *)     row INFO "network time (ntp)" "unknown" "needs sudo to read: run sudo -v first, or --apply" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 7. firewall, auto-login, FileVault
