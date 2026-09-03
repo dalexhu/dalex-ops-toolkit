@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.2.1"
+VERSION="1.2.2"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -527,13 +527,31 @@ autologin_on() { sysadminctl -autologin status 2>&1 | grep "is ON" >/dev/null; }
 # ssh session cannot reach (SACSetAutoLoginPassword error 22) even though it exits 0
 # and leaves autoLoginUser set. So: try plainly, verify, then retry inside the
 # user's launchd namespace, where the console session's agent is reachable.
+# Last resort: write /etc/kcpassword ourselves. It is what sysadminctl writes in the
+# end — the password XORed with a fixed 11-byte key, zero-padded to a multiple of 12
+# bytes — and needs no session at all, only root. The password reaches perl through
+# the environment, never the command line.
+write_kcpassword() {
+  PW="$PW" perl -e '
+    my @k = (0x7D,0x89,0x52,0x23,0xD2,0xBC,0xDD,0xEA,0xA3,0xB9,0x1F);
+    my @b = unpack("C*", $ENV{PW});
+    push @b, (0) x (12 - (@b % 12));
+    my $o = ""; $o .= chr($b[$_] ^ $k[$_ % 11]) for 0..$#b;
+    binmode STDOUT; print $o;' \
+  | sudo sh -c 'umask 077; cat > /etc/kcpassword && chown root:wheel /etc/kcpassword && chmod 600 /etc/kcpassword' \
+  && sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string "$AUTOLOGIN_USER" >/dev/null 2>&1
+}
+AUTOLOGIN_HOW=""
 set_autologin() {
   local uid
   sudo sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1
-  autologin_on && return 0
+  autologin_on && { AUTOLOGIN_HOW="sysadminctl"; return 0; }
   uid="$(id -u "$AUTOLOGIN_USER" 2>/dev/null)" || return 1
   sudo launchctl asuser "$uid" sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1
-  autologin_on
+  autologin_on && { AUTOLOGIN_HOW="sysadminctl in the console session"; return 0; }
+  write_kcpassword >/dev/null 2>&1
+  autologin_on && { AUTOLOGIN_HOW="kcpassword written directly"; return 0; }
+  return 1
 }
 if [ "$NO_AUTOLOGIN" -eq 1 ]; then
   row INFO "auto-login" "${AL_USER:-off}" "--no-autologin: not managed"
@@ -544,8 +562,8 @@ elif [ "$MODE" = "apply" ]; then
     *"is On"*) row FAIL "auto-login" "${AL_USER:-off}" "turn FileVault off first (sudo fdesetup disable)" ;;
     *)
       if ! ask_pw; then row FAIL "auto-login" "${AL_USER:-off}" "needs the account password on a tty"
-      elif set_autologin; then row DONE "auto-login" "${AL_USER:-off} -> $AUTOLOGIN_USER"
-      else row FAIL "auto-login" "${AL_USER:-off}" "no console session reachable: run this at the Mac (Terminal / Screen Sharing), or System Settings > Users & Groups > Automatic login"; fi ;;
+      elif set_autologin; then row DONE "auto-login" "${AL_USER:-off} -> $AUTOLOGIN_USER" "$AUTOLOGIN_HOW; proven by the next reboot"
+      else row FAIL "auto-login" "${AL_USER:-off}" "could not set it: use System Settings > Users & Groups > Automatic login at the Mac"; fi ;;
   esac
 else
   row FIX "auto-login" "${AL_USER:-off}" "want $AUTOLOGIN_USER$( [ -n "$AL_USER" ] && echo ' (name set, password missing)' )"
