@@ -26,6 +26,7 @@ items — running it twice changes nothing the second time.
 | ssh | Remote Login on |
 | login banner | login window shows `<hostname> \| <ip>` so whoever is at the console knows which box it is |
 | hostname / time zone / firewall | enforced only when you pass `--hostname`, `--timezone`, `--firewall` |
+| network time | "set date and time automatically" on. macOS needs root even to *read* this, so a plain check reports it as unknown unless you run `sudo -v` first; `--apply` always handles it |
 | auto-login | reported; enforced with `--autologin <user>` (VMs set to "start at login" need it to come back after a reboot) |
 | FileVault | reported; **on** blocks auto-login and unattended reboots, and hides ssh until someone unlocks the console |
 | hypervisor | Parallels Desktop / VMware Fusion / UTM / OrbStack detected, VMs listed; `--install-vm` installs one via Homebrew |
@@ -110,6 +111,10 @@ network
   OK    remote login (ssh)           on
   FIX   login banner                 (none)                         want "mini-a | 10.0.1.194"
 
+identity
+  OK    time zone                    America/Edmonton
+  OK    network time (ntp)           on                             time.apple.com
+
 security
   OK    application firewall         off
   WARN  FileVault                    on                             blocks auto-login and unattended reboot
@@ -141,6 +146,7 @@ mini-a: 11 items differ, 13 ok, 3 warnings — run again with --apply
 | ssh | 远程登录开 |
 | 登录界面横幅 | 登录窗口显示 `<主机名> \| <IP>`,在机房看一眼就知道是哪台 |
 | 主机名 / 时区 / 防火墙 | 只有传了 `--hostname`、`--timezone`、`--firewall` 才会强制 |
+| 网络对时 | “自动设置日期与时间”开。macOS 连读取这个状态都要 root,所以纯检查模式下除非先 `sudo -v`,否则报 unknown;`--apply` 一定会处理 |
 | 自动登录 | 只报告;`--autologin <user>` 才强制(设为"登录时启动"的虚拟机,重启后靠它才能回来) |
 | FileVault | 只报告;**开着**会挡住自动登录和无人值守重启,重启后 ssh 也连不上,直到有人在本机解锁 |
 | 虚拟机软件 | 检测 Parallels Desktop / VMware Fusion / UTM / OrbStack 并列出虚拟机;`--install-vm` 通过 Homebrew 安装 |
