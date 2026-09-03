@@ -20,14 +20,14 @@ items — running it twice changes nothing the second time.
 |---|---|
 | power | `pmset`: sleep, disksleep, displaysleep, powernap, standby **0**; autorestart after power loss, wake-on-LAN, ttyskeepawake, tcpkeepalive **1** |
 | keep-awake | a per-user LaunchAgent (`com.keepawake.caffeinate`) running `caffeinate -dimsu` forever |
-| screen saver | idle time 0 |
+| screen saver + lock | screen saver after 5 idle minutes (`--lock <minutes>`, 0 = never) and the lock engages at once. caffeinate keeps the display awake, so this is the only thing that locks an idle console; the session, the VMs and caffeinate keep running behind it |
 | updates | macOS: check **on**, download **on**, install **off** (patches are staged, never applied by themselves); security responses off; App Store auto-update off |
 | network | Wi-Fi off; primary interface reported, warns when it is on DHCP |
 | ssh | Remote Login on |
 | login banner | login window shows `<hostname> \| <ip>` so whoever is at the console knows which box it is |
 | hostname / time zone / firewall | enforced only when you pass `--hostname`, `--timezone`, `--firewall` |
-| network time | "set date and time automatically" on. macOS needs root even to *read* this, so a plain check reports it as unknown unless you run `sudo -v` first; `--apply` always handles it |
-| auto-login | reported; enforced with `--autologin <user>` (VMs set to "start at login" need it to come back after a reboot) |
+| network time | "set date and time automatically" on |
+| auto-login | on for the login user (`--autologin <user>` to pick another, `--no-autologin` to skip). VMs and LaunchAgents that start at login only come back after a power cut when someone is logged in; auto-login plus the lock above gives that without leaving the console open. Needs FileVault off |
 | FileVault | reported; **on** blocks auto-login and unattended reboots, and hides ssh until someone unlocks the console |
 | hypervisor | Parallels Desktop / VMware Fusion / UTM / OrbStack detected, VMs listed; `--install-vm` installs one via Homebrew |
 | updaters | third-party auto-updaters (Google Keystone, Sparkle, …) listed, not touched |
@@ -62,7 +62,9 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 --hostname <name>         Expected host name; set with --apply
 --timezone <IANA>         Expected time zone; set with --apply
 --firewall on|off         Expected application firewall state; set with --apply
---autologin <user>        Expect automatic login for <user>; --apply prompts for the password
+--autologin <user>        Account for automatic login (default: the user running the script)
+--no-autologin            Do not expect / set automatic login
+--lock <minutes>          Idle minutes before the screen saver + lock (default 5; 0 = never)
 --install-vm <name>       With --apply, brew install --cask parallels | vmware-fusion | utm
 --keep-wifi               Do not expect / turn off Wi-Fi
 --keep-security-updates   Leave XProtect / security-response auto-install on
@@ -82,6 +84,10 @@ or a host unreachable · `2` usage error or not macOS.
 - Remove third-party updaters or turn FileVault off. It tells you; you decide.
 - Run as root. Per-user items (the keep-awake agent, the screen saver) must land in the login
   user's domain, so run it as that user and let it `sudo` inside.
+- Store a password. `--apply` asks for the account password once, on the terminal, because
+  `sysadminctl` needs it for auto-login and the screen lock; it is handed to those two
+  calls and cleared. Auto-login itself stores an obfuscated copy in `/etc/kcpassword` —
+  that is how macOS implements it, so keep the box somewhere physical access is controlled.
 
 #### Sample output
 
@@ -98,6 +104,10 @@ power (pmset, AC)
 keep-awake
   FIX   com.keepawake.caffeinate     missing                        caffeinate -dimsu LaunchAgent
 
+screen saver + lock
+  FIX   screensaver idleTime         0                              want 300
+  FIX   screen lock                  300s                           want immediate
+
 software updates
   FIX   check for updates            unset                          want on
   OK    download updates             on
@@ -113,12 +123,12 @@ network
 
 identity
   OK    time zone                    America/Edmonton
-  OK    network time (ntp)           on                             time.apple.com
+  OK    network time (ntp)           on
 
 security
   OK    application firewall         off
   WARN  FileVault                    on                             blocks auto-login and unattended reboot
-  WARN  auto-login                   off                            VMs set to start at login will not come back after a reboot; see --autologin
+  FIX   auto-login                   off                            want terrasoft
 
 hypervisor
   OK    installed                    VMware Fusion 26.0.1
@@ -140,14 +150,14 @@ mini-a: 11 items differ, 13 ok, 3 warnings — run again with --apply
 |---|---|
 | 电源 | `pmset`:sleep、disksleep、displaysleep、powernap、standby 全部 **0**;断电后自动开机、网络唤醒、ttyskeepawake、tcpkeepalive 全部 **1** |
 | 防休眠 | 用户级 LaunchAgent(`com.keepawake.caffeinate`)常驻运行 `caffeinate -dimsu` |
-| 屏保 | 空闲时间 0 |
+| 屏保 + 锁屏 | 空闲 5 分钟启动屏保(`--lock <分钟>`,0 = 永不),锁屏立即生效。caffeinate 不让显示器休眠,所以屏保是唯一能锁住闲置控制台的东西;会话、虚拟机和 caffeinate 在后面照常跑 |
 | 系统更新 | macOS:检查**开**、下载**开**、安装**关**(补丁提前下好,但绝不自动装);安全响应关;App Store 自动更新关 |
 | 网络 | Wi-Fi 关;报告主网卡,若是 DHCP 则警告 |
 | ssh | 远程登录开 |
 | 登录界面横幅 | 登录窗口显示 `<主机名> \| <IP>`,在机房看一眼就知道是哪台 |
 | 主机名 / 时区 / 防火墙 | 只有传了 `--hostname`、`--timezone`、`--firewall` 才会强制 |
-| 网络对时 | “自动设置日期与时间”开。macOS 连读取这个状态都要 root,所以纯检查模式下除非先 `sudo -v`,否则报 unknown;`--apply` 一定会处理 |
-| 自动登录 | 只报告;`--autologin <user>` 才强制(设为"登录时启动"的虚拟机,重启后靠它才能回来) |
+| 网络对时 | “自动设置日期与时间”开 |
+| 自动登录 | 默认对登录用户开启(`--autologin <user>` 换账号,`--no-autologin` 跳过)。随登录启动的虚拟机和 LaunchAgent,断电重启后只有有人登录才会回来;自动登录加上面的锁屏,既能回来又不把控制台敞着。需要 FileVault 关闭 |
 | FileVault | 只报告;**开着**会挡住自动登录和无人值守重启,重启后 ssh 也连不上,直到有人在本机解锁 |
 | 虚拟机软件 | 检测 Parallels Desktop / VMware Fusion / UTM / OrbStack 并列出虚拟机;`--install-vm` 通过 Homebrew 安装 |
 | 第三方更新器 | 列出 Google Keystone、Sparkle 之类的自动更新器,不动它们 |
@@ -182,7 +192,9 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 --hostname <name>         期望的主机名;--apply 时设置
 --timezone <IANA>         期望的时区;--apply 时设置
 --firewall on|off         期望的应用防火墙状态;--apply 时设置
---autologin <user>        期望 <user> 自动登录;--apply 时提示输入该账号密码
+--autologin <user>        自动登录的账号(默认:运行脚本的用户)
+--no-autologin            不要求 / 不设置自动登录
+--lock <分钟>             空闲多少分钟后启动屏保并锁屏(默认 5;0 = 永不)
 --install-vm <name>       --apply 时 brew install --cask parallels | vmware-fusion | utm
 --keep-wifi               不要求 / 不关闭 Wi-Fi
 --keep-security-updates   保留 XProtect / 安全响应的自动安装
@@ -200,5 +212,8 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 - 不删第三方更新器,不关 FileVault。它告诉你,你来定。
 - 不以 root 运行。用户级的项(防休眠 agent、屏保)必须落在登录用户的域里,所以用那个用户跑,
   脚本内部自己 `sudo`。
+- 不保存密码。`--apply` 会在终端上问一次账号密码,因为 `sysadminctl` 设自动登录和锁屏都要它;
+  只传给这两次调用,用完即清。自动登录本身会把密码混淆后存进 `/etc/kcpassword`,这是
+  macOS 的实现方式,所以机器要放在能管住物理接触的地方。
 
 示例输出见上方英文部分。
