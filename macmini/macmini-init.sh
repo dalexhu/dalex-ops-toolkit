@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.2.2"
+VERSION="1.2.3"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -522,7 +522,8 @@ case "$FV" in
 esac
 
 AL_USER="$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)"
-autologin_on() { sysadminctl -autologin status 2>&1 | grep "is ON" >/dev/null; }
+# status wording: "Automatic login is OFF." vs "Automatic login user: <name>"
+autologin_on() { sysadminctl -autologin status 2>&1 | grep -E "is ON|login user: *$AUTOLOGIN_USER\$" >/dev/null; }
 # sysadminctl writes the auto-login password through the user's SessionAgent, which an
 # ssh session cannot reach (SACSetAutoLoginPassword error 22) even though it exits 0
 # and leaves autoLoginUser set. So: try plainly, verify, then retry inside the
