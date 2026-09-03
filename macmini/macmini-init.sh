@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -522,21 +522,33 @@ case "$FV" in
 esac
 
 AL_USER="$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)"
+autologin_on() { sysadminctl -autologin status 2>&1 | grep "is ON" >/dev/null; }
+# sysadminctl writes the auto-login password through the user's SessionAgent, which an
+# ssh session cannot reach (SACSetAutoLoginPassword error 22) even though it exits 0
+# and leaves autoLoginUser set. So: try plainly, verify, then retry inside the
+# user's launchd namespace, where the console session's agent is reachable.
+set_autologin() {
+  local uid
+  sudo sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1
+  autologin_on && return 0
+  uid="$(id -u "$AUTOLOGIN_USER" 2>/dev/null)" || return 1
+  sudo launchctl asuser "$uid" sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1
+  autologin_on
+}
 if [ "$NO_AUTOLOGIN" -eq 1 ]; then
   row INFO "auto-login" "${AL_USER:-off}" "--no-autologin: not managed"
-elif [ "$AL_USER" = "$AUTOLOGIN_USER" ] && [ -e /etc/kcpassword ]; then
+elif [ "$AL_USER" = "$AUTOLOGIN_USER" ] && { autologin_on || [ -e /etc/kcpassword ]; }; then
   row OK "auto-login" "$AL_USER" "VMs that start at login survive a reboot"
 elif [ "$MODE" = "apply" ]; then
   case "$FV" in
     *"is On"*) row FAIL "auto-login" "${AL_USER:-off}" "turn FileVault off first (sudo fdesetup disable)" ;;
     *)
       if ! ask_pw; then row FAIL "auto-login" "${AL_USER:-off}" "needs the account password on a tty"
-      elif sudo sysadminctl -autologin set -userName "$AUTOLOGIN_USER" -password "$PW" >/dev/null 2>&1; then
-        row DONE "auto-login" "${AL_USER:-off} -> $AUTOLOGIN_USER"
-      else row FAIL "auto-login" "${AL_USER:-off}" "sysadminctl -autologin refused (wrong password?)"; fi ;;
+      elif set_autologin; then row DONE "auto-login" "${AL_USER:-off} -> $AUTOLOGIN_USER"
+      else row FAIL "auto-login" "${AL_USER:-off}" "no console session reachable: run this at the Mac (Terminal / Screen Sharing), or System Settings > Users & Groups > Automatic login"; fi ;;
   esac
 else
-  row FIX "auto-login" "${AL_USER:-off}" "want $AUTOLOGIN_USER"
+  row FIX "auto-login" "${AL_USER:-off}" "want $AUTOLOGIN_USER$( [ -n "$AL_USER" ] && echo ' (name set, password missing)' )"
 fi
 
 # ---------------------------------------------------------------------------
