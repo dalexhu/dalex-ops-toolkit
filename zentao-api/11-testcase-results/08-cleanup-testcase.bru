@@ -1,0 +1,27 @@
+meta {
+  name: cleanup testcase
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/testcases/{{tcCaseId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("tcCaseId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("tcCaseId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

@@ -1,0 +1,34 @@
+meta {
+  name: 16 bug resolve fixed
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/bugs/{{flowBugId}}/resolve
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBugId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "resolution": "fixed",
+    "resolvedBuild": "{{flowBuildId}}",
+    "resolvedDate": "2026-09-12 10:00:00",
+    "assignedTo": "{{account}}",
+    "comment": "fixed in build 1"
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("resolved", function() { expect(res.getBody().status).to.equal("resolved"); expect(res.getBody().resolution).to.equal("fixed"); });
+}

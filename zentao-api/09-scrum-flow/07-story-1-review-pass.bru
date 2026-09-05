@@ -1,0 +1,32 @@
+meta {
+  name: 5.1 story review pass
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/stories/{{flowStory1Id}}/review
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowStory1Id")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "result": "pass",
+    "reviewedDate": "2026-09-08",
+    "comment": "reviewed via api"
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("story active", function() { expect(res.getBody().status).to.equal("active"); });
+}

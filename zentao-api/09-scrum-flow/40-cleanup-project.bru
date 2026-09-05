@@ -1,0 +1,27 @@
+meta {
+  name: cleanup project
+  type: http
+  seq: 40
+}
+
+delete {
+  url: {{baseUrl}}/projects/{{flowProjectId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowProjectId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowProjectId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

@@ -1,0 +1,33 @@
+meta {
+  name: 12 task 1 finish
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/tasks/{{flowTask1Id}}/finish
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowTask1Id")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "currentConsumed": 1,
+    "realStarted": "2026-09-08 09:00:00",
+    "finishedDate": "2026-09-10 17:00:00",
+    "comment": "done"
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("done", function() { expect(res.getBody().status).to.equal("done"); });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: cleanup build
+  type: http
+  seq: 31
+}
+
+delete {
+  url: {{baseUrl}}/builds/{{flowBuildId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBuildId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowBuildId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: bug delete
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/bugs/{{bugId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("bugId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("bugId", "");
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+}

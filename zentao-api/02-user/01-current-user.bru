@@ -1,0 +1,20 @@
+meta {
+  name: current user
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/user
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("is the login account", function() { expect(JSON.stringify(res.getBody())).to.include(bru.getEnvVar("account")); });
+}

@@ -1,0 +1,24 @@
+meta {
+  name: v2 page size
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{v2BaseUrl}}/executions?recPerPage=3
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("recPerPage honoured", function() { const b = res.getBody(); expect(Number(b.pager.recPerPage)).to.equal(3); expect(b.executions.length).to.be.at.most(3); });
+}
+
+docs {
+  分页用 `recPerPage` 控制每页条数。22.5 实测 `page` / `pageID` 参数不改变 `offset`，翻页方式待确认，因此这里只断言每页条数。
+}

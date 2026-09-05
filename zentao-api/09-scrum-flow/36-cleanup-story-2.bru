@@ -1,0 +1,27 @@
+meta {
+  name: cleanup story 2
+  type: http
+  seq: 36
+}
+
+delete {
+  url: {{baseUrl}}/stories/{{flowStory2Id}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowStory2Id")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowStory2Id", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

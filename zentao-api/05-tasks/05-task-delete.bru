@@ -1,0 +1,28 @@
+meta {
+  name: task delete
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("taskId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("deletedTaskId", bru.getVar("taskId"));
+  bru.setVar("taskId", "");
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+}

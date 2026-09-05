@@ -1,0 +1,20 @@
+meta {
+  name: product detail
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/products/{{productId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("id matches", function() { expect(String(res.getBody().id)).to.equal(String(bru.getVar("productId"))); });
+}

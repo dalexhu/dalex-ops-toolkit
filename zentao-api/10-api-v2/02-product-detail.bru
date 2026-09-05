@@ -1,0 +1,29 @@
+meta {
+  name: v2 product detail
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{v2BaseUrl}}/products/{{v2ProductId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("v2ProductId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("product with related sections", function() { const b = res.getBody(); expect(String(b.product.id)).to.equal(String(bru.getVar("v2ProductId"))); ["dynamics","members","branches","reviewers"].forEach(k => expect(b).to.have.property(k)); });
+}
+
+docs {
+  v2 的详情路由一次返回多块数据（动态、成员、分支、评审人），对应路由表里的 `'response' => 'product,dynamics,members,branches,reviewers'`。v1 需要分多次请求。
+}

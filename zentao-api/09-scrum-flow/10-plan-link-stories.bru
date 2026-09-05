@@ -1,0 +1,38 @@
+meta {
+  name: 6 plan link stories
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/productplans/{{flowPlanId}}/linkstories
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowPlanId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "stories": [
+      "{{flowStory1Id}}",
+      "{{flowStory2Id}}",
+      "{{flowStory3Id}}"
+    ]
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("3 stories in plan", function() { expect((res.getBody().stories || []).length).to.equal(3); });
+}
+
+docs {
+  需求先挂到产品计划，建迭代时带上 plans 即可把计划里的需求关联进迭代（API 没有单独的关联需求入口）。
+}

@@ -1,0 +1,30 @@
+meta {
+  name: get token
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/tokens
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "account": "{{account}}",
+    "password": "{{password}}"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) bru.setVar("token", res.getBody().token);
+}
+
+tests {
+  test("token issued", function() { expect(res.getStatus()).to.equal(201); expect(res.getBody().token).to.be.a("string").with.length.above(10); });
+}
+
+docs {
+  POST /tokens 用账号口令换会话 token，之后所有请求带 `Token` 头。口令来自 .env 的 ZENTAO_PASSWORD。
+}

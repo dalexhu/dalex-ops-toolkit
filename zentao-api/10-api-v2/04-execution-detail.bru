@@ -1,0 +1,25 @@
+meta {
+  name: v2 execution detail
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{v2BaseUrl}}/executions/{{v2ExecutionId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("v2ExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("execution id matches", function() { expect(String(res.getBody().execution.id)).to.equal(String(bru.getVar("v2ExecutionId"))); });
+}

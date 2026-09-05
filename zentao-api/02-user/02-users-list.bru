@@ -1,0 +1,20 @@
+meta {
+  name: users list
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/users?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("has users array", function() { expect(res.getBody().users).to.be.an("array"); });
+}

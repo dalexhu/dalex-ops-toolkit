@@ -1,0 +1,30 @@
+meta {
+  name: v2 my tasks
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{v2BaseUrl}}/my/tasks
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const t = (res.getBody().tasks || [])[0];
+  if (t && !bru.getVar("v2TaskId")) bru.setVar("v2TaskId", t.id);
+}
+
+docs {
+  自动化专用账号名下通常没有任务，这里断言的是接口可用与信封结构，不假设有数据。
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("tasks array with pager", function() { expect(res.getBody().tasks).to.be.an("array"); const p = res.getBody().pager; expect(p).to.be.an("object"); expect(Number(p.recTotal)).to.be.at.least(0); });
+}

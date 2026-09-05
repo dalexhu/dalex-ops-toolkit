@@ -1,0 +1,20 @@
+meta {
+  name: stories list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/products/{{productId}}/stories
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200/201", function() { expect([200, 201]).to.include(res.getStatus()); });
+  test("has stories array", function() { expect(res.getBody().stories).to.be.an("array"); });
+}

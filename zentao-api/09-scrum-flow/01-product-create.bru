@@ -1,0 +1,38 @@
+meta {
+  name: 1 product create
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/products
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} scrum product {{$timestamp}}",
+    "PO": "{{account}}",
+    "QD": "{{account}}",
+    "RD": "{{account}}",
+    "type": "normal",
+    "desc": "scrum flow demo, safe to delete"
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowProductId", res.getBody().id);
+}
+
+tests {
+  test("flowProductId created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+}
+
+docs {
+  每轮新建一个独立产品，流程结束后删除。
+}

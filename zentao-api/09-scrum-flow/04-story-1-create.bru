@@ -1,0 +1,38 @@
+meta {
+  name: 4.1 story create: login page
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/products/{{flowProductId}}/stories
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "title": "{{prefix}} scrum story 1: login page",
+    "spec": "<p>As a user I want login page.</p>",
+    "verify": "<p>acceptance: works</p>",
+    "pri": 1,
+    "category": "feature",
+    "estimate": 8,
+    "reviewer": [
+      "{{account}}"
+    ]
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowStory1Id", res.getBody().id);
+}
+
+tests {
+  test("flowStory1Id created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+  test("waits for review", function() { expect(["reviewing","draft","active"]).to.include(res.getBody().status); });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: story delete
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/stories/{{storyId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("storyId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("storyId", "");
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+}

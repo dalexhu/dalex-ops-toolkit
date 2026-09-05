@@ -1,0 +1,27 @@
+meta {
+  name: cleanup plan
+  type: http
+  seq: 39
+}
+
+delete {
+  url: {{baseUrl}}/productplans/{{flowPlanId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowPlanId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowPlanId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

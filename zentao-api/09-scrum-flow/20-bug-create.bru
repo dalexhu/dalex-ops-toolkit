@@ -1,0 +1,43 @@
+meta {
+  name: 14 bug create against the build
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{baseUrl}}/products/{{flowProductId}}/bugs
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBuildId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "title": "{{prefix}} scrum bug: login button misaligned",
+    "severity": 3,
+    "pri": 2,
+    "type": "codeerror",
+    "openedBuild": [
+      "{{flowBuildId}}"
+    ],
+    "execution": "{{flowExecutionId}}",
+    "story": "{{flowStory1Id}}",
+    "steps": "<p>1. open login page<br>2. button is off by 4px</p>",
+    "assignedTo": "{{account}}"
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowBugId", res.getBody().id);
+}
+
+tests {
+  test("flowBugId created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+}

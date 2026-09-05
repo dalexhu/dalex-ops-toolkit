@@ -1,0 +1,28 @@
+meta {
+  name: 22.1 sprint stories after unlink
+  type: http
+  seq: 29
+}
+
+get {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/stories
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("2 stories left, the unlinked one is gone", function() {
+    const ids = (res.getBody().stories || []).map(s => String(s.id));
+    expect(ids.length).to.equal(2);
+    expect(ids).to.not.include(String(bru.getVar("flowStory3Id")));
+  });
+}

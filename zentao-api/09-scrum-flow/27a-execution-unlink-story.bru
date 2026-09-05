@@ -1,0 +1,29 @@
+meta {
+  name: 22 execution unlink one story
+  type: http
+  seq: 28
+}
+
+delete {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/stories/{{flowStory3Id}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId") || !bru.getVar("flowStory3Id")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200 unlinked", function() { expect(res.getStatus()).to.equal(200); });
+}
+
+docs {
+  DELETE /executions/:id/stories/:storyID —— 与关联对称的解除关联，同为本地补丁新增（原版没有 delete 方法，
+  这条两段式路由也不存在，由补丁 5 写入 config/apiv1.php）。模型层 executionModel::unlinkStory() 一次处理一条需求，
+  并会拒绝解除"项目下仍有子迭代关联着该需求"以及被冻结的需求（返回 400）。
+}

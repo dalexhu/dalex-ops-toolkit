@@ -1,0 +1,42 @@
+meta {
+  name: 8 execution stories linked
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/stories
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("execution stories endpoint answers", function() { expect(res.getBody().stories).to.be.an("array"); });
+  test("3 stories now linked to the sprint", function() { expect((res.getBody().stories || []).length).to.equal(3); });
+}
+
+docs {
+  REST API v1 无法把已有需求关联进迭代，原因有三层（22.5 实测）：
+  1. 路由表 config/apiv1.php 里没有对应入口：executionstories.php / projectstories.php 都只实现了 get()，
+     唯一的 linkstories 是 /productplans/:id/linkstories（关到产品计划，不是迭代）。
+  2. 真正干这件事的 executionModel::linkStories() 只在网页流程里被调用
+     （execution/model.php:5333、execution/zen.php:2067），且要用户在"是否关联计划下的需求"确认框点确认；
+     而 API 的 executions POST 调的是 $control->create($projectID)，$confirm 用默认值 'no'，所以永远不会执行。
+     结论：给 API 传 plans 只是把计划挂到迭代，不会把计划下的需求拉进来。
+  3. 想改调网页控制器 execution-linkStory 也走不通：framework/base/router.class.php 的 startSession() 按
+     "是不是 API 请求"选择会话目录 —— API 会话在 tmp/apisession，网页会话在 tmp/session，两者互不可见，
+     所以用 API token（无论放 Cookie 还是 ?zentaosid=）调网页接口都会得到"登录已超时"。
+     反方向是支持的：API 请求可以用 Token: ss_<网页会话id> 复用网页会话。
+
+  因此本请求只校验接口结构。迭代与需求的关系在本流程里通过任务的 story 字段体现（见 13/14/15 与快照断言）。
+  要真正关联，只能在网页上建迭代并确认，或先用 /productplans/:id/linkstories 把需求挂到计划再在 UI 里确认。
+}

@@ -1,0 +1,41 @@
+meta {
+  name: 7 execution (sprint) create
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/projects/{{flowProjectId}}/executions
+  body: json
+  auth: none
+}
+
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} scrum sprint 1",
+    "begin": "2026-09-08",
+    "end": "2026-09-19",
+    "lifetime": "short",
+    "products": [
+      "{{flowProductId}}"
+    ],
+    "teamMembers": [
+      "{{account}}"
+    ],
+    "PM": "{{account}}",
+    "desc": "sprint 1"
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowExecutionId", res.getBody().id);
+}
+
+tests {
+  test("flowExecutionId created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+}

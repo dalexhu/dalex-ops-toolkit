@@ -1,0 +1,35 @@
+meta {
+  name: 3 read the case steps
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/testcases/{{tcCaseId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("tcCaseId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const s = res.getBody().steps || [];
+  bru.setVar("tcStepCount", String(s.length));
+  if (s[0]) bru.setVar("tcStep1Id", s[0].id);
+  if (s[1]) bru.setVar("tcStep2Id", s[1].id);
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("two steps with ids", function() { const s = res.getBody().steps || []; expect(s.length).to.equal(2); s.forEach(x => expect(Number(x.id)).to.be.above(0)); });
+}
+
+docs {
+  回写结果时步骤是**按顺序**匹配的，不是按 id，所以每轮跑之前都要重新取一次步骤；用例一改步骤，缓存下来的映射会静默错位。
+}

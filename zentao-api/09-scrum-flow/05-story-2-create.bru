@@ -1,0 +1,38 @@
+meta {
+  name: 4.2 story create: user list
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/products/{{flowProductId}}/stories
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "title": "{{prefix}} scrum story 2: user list",
+    "spec": "<p>As a user I want user list.</p>",
+    "verify": "<p>acceptance: works</p>",
+    "pri": 2,
+    "category": "feature",
+    "estimate": 8,
+    "reviewer": [
+      "{{account}}"
+    ]
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowStory2Id", res.getBody().id);
+}
+
+tests {
+  test("flowStory2Id created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+  test("waits for review", function() { expect(["reviewing","draft","active"]).to.include(res.getBody().status); });
+}

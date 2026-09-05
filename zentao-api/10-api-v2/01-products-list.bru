@@ -1,0 +1,36 @@
+meta {
+  name: v2 products list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{v2BaseUrl}}/products
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const p = (res.getBody().products || [])[0];
+  if (p) bru.setVar("v2ProductId", p.id);
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("products array with pager", function() { expect(res.getBody().products).to.be.an("array"); const p = res.getBody().pager; expect(p).to.be.an("object"); expect(Number(p.recTotal)).to.be.at.least(0); });
+  test("at least one product", function() { expect(res.getBody().products.length).to.be.above(0); });
+}
+
+docs {
+  v2 复用 v1 换来的同一个 token（`POST /api.php/v1/tokens`），请求头同样是 `Token`。
+  返回信封统一为 `{status, <载荷>, pager}`，与 v1 的裸对象不同。
+
+  鉴权：不带 Token 时 v2 返回 401 `{"error":"Unauthorized"}`（用 curl 单独验证过）。
+  这一点没有写成断言，因为 bru 运行器在整轮里共用 cookie，换取 token 时拿到的会话
+  cookie 会让"匿名"请求照样通过，断不出 401。
+}
