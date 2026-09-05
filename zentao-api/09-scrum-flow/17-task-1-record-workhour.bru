@@ -1,0 +1,49 @@
+meta {
+  name: 11 task 1 record work hours
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/tasks/{{flowTask1Id}}/estimate
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowTask1Id")) bru.runner.skipRequest();
+  // work-hour records must not be in the future; build today's date in LOCAL time
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  bru.setVar("today", today);
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "date": [
+      "{{today}}"
+    ],
+    "consumed": [
+      2
+    ],
+    "left": [
+      1
+    ],
+    "work": [
+      "coding"
+    ]
+  }
+}
+
+tests {
+  test("recorded or gated by privilege", function() { expect([200, 403]).to.include(res.getStatus()); });
+  test("consumed accumulated when allowed", function() { if (res.getStatus() === 200) expect(Number(res.getBody().consumed)).to.be.above(1); });
+}
+
+docs {
+  recordWorkhour 接收数组（可一次记多天）。该入口调用控制器 task-recordWorkhour，而 zt_grouppriv 里根本没有这条权限（只有 task-recordEstimate），所以任何权限组都授不了权，只有公司管理员能通过（getUserPriv 的管理员短路）。83 上已把 alex 加入公司管理员故返回 200；非管理员实例返回 403，断言对两者容错。工时日期不能晚于今天，故用本地当天。任务工时也可由 start/finish 的 consumed/currentConsumed 体现。
+}

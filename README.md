@@ -9,9 +9,10 @@
 | [`jdk/`](jdk/) | [`jdkcheck.sh`](jdk/jdkcheck.sh) | Which JDKs are installed, which are actually running, and what tz database each one bundles? |
 | [`bench/`](bench/) | [`perfcheck.sh`](bench/perfcheck.sh) | How does this machine perform on CPU, memory and disk, sized to its own cores and quota, as one composite score? |
 | [`macmini/`](macmini/) | [`macmini-init.sh`](macmini/macmini-init.sh) | Is this Mac mini set up as an always-on VM host — never sleeps, never auto-installs updates, comes back after a power cut — and if not, apply exactly what differs? |
+| [`zentao-api/`](zentao-api/) | Bruno collection (`bru run --env test83`) | Does the ZenTao REST API still answer for token, user, products, projects/executions and task/bug/story/todo CRUD after a change? |
 
 Each directory has its own README with usage, options and sample output:
-[tz/README.md](tz/README.md) · [jdk/README.md](jdk/README.md) · [bench/README.md](bench/README.md) · [macmini/README.md](macmini/README.md)
+[tz/README.md](tz/README.md) · [jdk/README.md](jdk/README.md) · [bench/README.md](bench/README.md) · [macmini/README.md](macmini/README.md) · [zentao-api/README.md](zentao-api/README.md)
 
 每个目录下都有自己的 README,含用法、选项与示例输出。
 

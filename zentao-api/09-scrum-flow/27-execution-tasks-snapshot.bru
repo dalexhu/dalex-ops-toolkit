@@ -1,0 +1,24 @@
+meta {
+  name: 21 sprint tasks snapshot
+  type: http
+  seq: 27
+}
+
+get {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/tasks
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("3 tasks, one done", function() { const t = res.getBody().tasks || []; expect(t.length).to.equal(3); expect(t.filter(x => x.status === "done").length).to.equal(1); });
+}

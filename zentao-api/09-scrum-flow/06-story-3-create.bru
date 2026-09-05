@@ -1,0 +1,38 @@
+meta {
+  name: 4.3 story create: export report
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/products/{{flowProductId}}/stories
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "title": "{{prefix}} scrum story 3: export report",
+    "spec": "<p>As a user I want export report.</p>",
+    "verify": "<p>acceptance: works</p>",
+    "pri": 3,
+    "category": "feature",
+    "estimate": 8,
+    "reviewer": [
+      "{{account}}"
+    ]
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowStory3Id", res.getBody().id);
+}
+
+tests {
+  test("flowStory3Id created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+  test("waits for review", function() { expect(["reviewing","draft","active"]).to.include(res.getBody().status); });
+}

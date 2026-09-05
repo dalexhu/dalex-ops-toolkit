@@ -1,0 +1,30 @@
+meta {
+  name: 17 bug close
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/bugs/{{flowBugId}}/close
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBugId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "comment": "verified, closing"
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("closed", function() { expect(res.getBody().status).to.equal("closed"); });
+}

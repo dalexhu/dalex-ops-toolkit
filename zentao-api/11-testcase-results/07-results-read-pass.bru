@@ -1,0 +1,32 @@
+meta {
+  name: 7 read back: case result is pass
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/testcases/{{tcCaseId}}/results
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("tcCaseId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("a passing run is recorded", function() {
+    const rows = res.getBody().results || [];
+    expect(rows.length).to.be.at.least(2);
+    expect(rows.some(r => r.caseResult === "pass")).to.equal(true);
+  });
+}
+
+docs {
+  同一个用例可以反复回写，每次是一条新的执行记录，历史保留。
+}

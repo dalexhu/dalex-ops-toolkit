@@ -1,0 +1,31 @@
+meta {
+  name: task update
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("taskId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "pri": 2,
+    "desc": "updated by bruno"
+  }
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("pri updated", function() { expect(Number(res.getBody().pri)).to.equal(2); });
+}

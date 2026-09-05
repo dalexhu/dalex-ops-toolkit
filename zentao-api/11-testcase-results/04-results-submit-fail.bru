@@ -1,0 +1,45 @@
+meta {
+  name: 4 submit results: one step fails
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/testcases/{{tcCaseId}}/results
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("tcCaseId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "steps": [
+      {
+        "result": "pass",
+        "real": "表单正常显示"
+      },
+      {
+        "result": "fail",
+        "real": "提交后返回 500"
+      }
+    ]
+  }
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}
+
+docs {
+  `POST /testcases/:id/results`，body 里 `steps[N]` 对应用例第 N 个步骤。
+  加查询参数 `?testtask=<测试单id>` 可把这次执行挂到测试单上并推进其进度；不加就是一次独立的用例执行记录。
+  `?version=` 默认取用例当前版本。
+  用例整体结论由步骤结果推导，不用自己算。
+}

@@ -1,0 +1,27 @@
+meta {
+  name: products list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/products
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const items = res.getBody().products || [];
+  const hit = items.find(x => x.status === "normal") || items[0];
+  if (hit && !bru.getVar("productId")) bru.setVar("productId", hit.id);
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("has products array", function() { expect(res.getBody().products).to.be.an("array"); });
+  test("at least one product", function() { expect(res.getBody().products.length).to.be.above(0); });
+}

@@ -1,0 +1,31 @@
+meta {
+  name: v2 execution tasks
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{v2BaseUrl}}/executions/{{v2ExecutionId}}/tasks
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("v2ExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  // 优先从迭代任务里取一个 id 给任务详情用；"我的任务"对自动化账号通常是空的
+  const t = (res.getBody().tasks || [])[0];
+  if (t) bru.setVar("v2TaskId", t.id);
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("tasks array with pager", function() { expect(res.getBody().tasks).to.be.an("array"); const p = res.getBody().pager; expect(p).to.be.an("object"); expect(Number(p.recTotal)).to.be.at.least(0); });
+}

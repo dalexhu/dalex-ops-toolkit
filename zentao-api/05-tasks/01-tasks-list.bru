@@ -1,0 +1,20 @@
+meta {
+  name: tasks list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/executions/{{executionId}}/tasks
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("has tasks array", function() { expect(res.getBody().tasks).to.be.an("array"); });
+}

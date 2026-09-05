@@ -1,0 +1,27 @@
+meta {
+  name: executions of project
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/projects/{{projectId}}/executions
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const items = res.getBody().executions || [];
+  const hit = items.find(x => x.status === "doing" || x.status === "wait") || items[0];
+  if (hit && !bru.getVar("executionId")) bru.setVar("executionId", hit.id);
+}
+
+tests {
+  test("200 OK", function() { expect(res.getStatus()).to.equal(200); });
+  test("has executions array", function() { expect(res.getBody().executions).to.be.an("array"); });
+  test("at least one execution", function() { expect(res.getBody().executions.length).to.be.above(0); });
+}

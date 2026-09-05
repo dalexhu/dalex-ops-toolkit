@@ -1,0 +1,27 @@
+meta {
+  name: cleanup testtask
+  type: http
+  seq: 28
+}
+
+delete {
+  url: {{baseUrl}}/testtasks/{{flowTestTaskId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowTestTaskId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowTestTaskId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

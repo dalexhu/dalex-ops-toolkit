@@ -1,0 +1,39 @@
+meta {
+  name: todo create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/todos
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} bruno todo {{$timestamp}}",
+    "type": "custom",
+    "pri": 3,
+    "date": "2026-09-10",
+    "begin": "0900",
+    "end": "1000",
+    "desc": "created by the bruno api test"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) bru.setVar("todoId", res.getBody().id);
+}
+
+tests {
+  test("201 created with id", function() { expect(res.getStatus()).to.equal(201); expect(Number(res.getBody().id)).to.be.above(0); });
+}
+
+docs {
+  必填：name。date 为 YYYY-MM-DD，begin/end 为 HHmm。
+}

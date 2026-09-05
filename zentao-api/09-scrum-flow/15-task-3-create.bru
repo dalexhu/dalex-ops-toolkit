@@ -1,0 +1,42 @@
+meta {
+  name: 9.3 task create for story 3
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/tasks
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} scrum task 3",
+    "type": "devel",
+    "story": "{{flowStory3Id}}",
+    "assignedTo": "{{account}}",
+    "pri": 2,
+    "estimate": 4,
+    "estStarted": "2026-09-08",
+    "deadline": "2026-09-12",
+    "desc": "implement story 3"
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowTask3Id", res.getBody().id);
+}
+
+tests {
+  test("flowTask3Id created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+  test("linked to story", function() { expect(Number(res.getBody().story)).to.equal(Number(bru.getVar("flowStory3Id"))); });
+}

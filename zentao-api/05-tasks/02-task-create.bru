@@ -1,0 +1,41 @@
+meta {
+  name: task create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/executions/{{executionId}}/tasks
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} bruno task {{$timestamp}}",
+    "type": "devel",
+    "assignedTo": "{{account}}",
+    "pri": 3,
+    "estimate": 1,
+    "estStarted": "2026-09-10",
+    "deadline": "2026-09-16",
+    "desc": "created by the bruno api test, safe to delete"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) bru.setVar("taskId", res.getBody().id);
+}
+
+tests {
+  test("201 created with id", function() { expect(res.getStatus()).to.equal(201); expect(Number(res.getBody().id)).to.be.above(0); });
+  test("name kept", function() { expect(res.getBody().name).to.include("bruno task"); });
+}
+
+docs {
+  必填：name, assignedTo, type, estStarted, deadline（见 api/v1/entries/tasks.php）。日期用 YYYY-MM-DD。
+}

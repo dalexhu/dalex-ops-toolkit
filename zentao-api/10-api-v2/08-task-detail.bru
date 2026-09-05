@@ -1,0 +1,25 @@
+meta {
+  name: v2 task detail
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{v2BaseUrl}}/tasks/{{v2TaskId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("v2TaskId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("task with actions", function() { const b = res.getBody(); expect(String(b.task.id)).to.equal(String(bru.getVar("v2TaskId"))); expect(b.actions).to.be.an("array"); });
+}

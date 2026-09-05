@@ -1,0 +1,40 @@
+meta {
+  name: 19 test task create
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/projects/{{flowProjectId}}/testtasks
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBuildId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "name": "{{prefix}} scrum sprint1 test round 1",
+    "product": "{{flowProductId}}",
+    "execution": "{{flowExecutionId}}",
+    "build": "{{flowBuildId}}",
+    "owner": "{{account}}",
+    "begin": "2026-09-12",
+    "end": "2026-09-15",
+    "desc": "regression on build 1"
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) bru.setVar("flowTestTaskId", res.getBody().id);
+}
+
+tests {
+  test("flowTestTaskId created", function() { expect([200, 201]).to.include(res.getStatus()); expect(Number(res.getBody().id)).to.be.above(0); });
+}

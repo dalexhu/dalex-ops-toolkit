@@ -1,0 +1,42 @@
+meta {
+  name: 8.5 execution link stories
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/executions/{{flowExecutionId}}/stories
+  body: json
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowExecutionId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "stories": [
+      "{{flowStory1Id}}",
+      "{{flowStory2Id}}",
+      "{{flowStory3Id}}"
+    ]
+  }
+}
+
+tests {
+  test("201 linked", function() { expect(res.getStatus()).to.equal(201); });
+  test("returns the linked story ids", function() { expect((res.getBody().stories || []).length).to.equal(3); });
+}
+
+docs {
+  POST /executions/:id/stories —— 原版禅道 22.5 没有这个方法（entries/executionstories.php 只有 get()），
+  由本地补丁 3 注入（见 dalex-ops-lab macmini-v2/host-readmes/zentao-patch-and-run.sh）。
+  它照搬 executionModel::linkStories() 的做法：先把需求关到项目，再关到迭代。
+  需求必须已评审为 active，draft/reviewing/closed 会被模型层跳过。
+  未打补丁的实例上此请求会失败（原版没有 post 方法）。
+}

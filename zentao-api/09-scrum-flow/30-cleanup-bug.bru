@@ -1,0 +1,27 @@
+meta {
+  name: cleanup bug
+  type: http
+  seq: 30
+}
+
+delete {
+  url: {{baseUrl}}/bugs/{{flowBugId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("flowBugId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  bru.setVar("flowBugId", "");
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+}

@@ -1,0 +1,26 @@
+meta {
+  name: v2 executions list
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{v2BaseUrl}}/executions
+  body: none
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+script:post-response {
+  const e = (res.getBody().executions || [])[0];
+  if (e) bru.setVar("v2ExecutionId", e.id);
+}
+
+tests {
+  test("200", function() { expect(res.getStatus()).to.equal(200); });
+  test("status success", function() { expect(res.getBody().status).to.equal("success"); });
+  test("executions array with pager", function() { expect(res.getBody().executions).to.be.an("array"); const p = res.getBody().pager; expect(p).to.be.an("object"); expect(Number(p.recTotal)).to.be.at.least(0); });
+}

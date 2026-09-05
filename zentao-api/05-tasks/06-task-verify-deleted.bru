@@ -1,0 +1,31 @@
+meta {
+  name: task verify deleted
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/tasks/{{deletedTaskId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  if (!bru.getVar("deletedTaskId")) bru.runner.skipRequest();
+}
+
+headers {
+  Token: {{token}}
+}
+
+tests {
+  test("task is gone after DELETE", function() {
+    const b = res.getBody() || {};
+    const gone = res.getStatus() >= 400 || b.deleted === true || b.deleted === "1";
+    expect(gone, "DELETE /tasks/{id} returned success but the task still exists (ZenTao 22.5 API bug?)").to.equal(true);
+  });
+}
+
+docs {
+  禅道 22.5 上 DELETE /tasks/{id} 返回 {"message":"success"} 但任务并未被删除（deleted 仍为 0），此请求用来暴露这个问题。
+}

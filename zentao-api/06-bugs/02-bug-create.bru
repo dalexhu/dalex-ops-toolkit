@@ -1,0 +1,41 @@
+meta {
+  name: bug create
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/products/{{productId}}/bugs
+  body: json
+  auth: none
+}
+
+headers {
+  Token: {{token}}
+}
+
+body:json {
+  {
+    "title": "{{prefix}} bruno bug {{$timestamp}}",
+    "pri": 3,
+    "severity": 3,
+    "type": "codeerror",
+    "openedBuild": [
+      "trunk"
+    ],
+    "steps": "<p>created by the bruno api test, safe to delete</p>",
+    "assignedTo": "{{account}}"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 201) bru.setVar("bugId", res.getBody().id);
+}
+
+tests {
+  test("201 created with id", function() { expect(res.getStatus()).to.equal(201); expect(Number(res.getBody().id)).to.be.above(0); });
+}
+
+docs {
+  必填：title, pri, severity, type, openedBuild（trunk 表示主干）。
+}
