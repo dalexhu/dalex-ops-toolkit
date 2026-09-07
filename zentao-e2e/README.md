@@ -241,3 +241,17 @@ ru             = reading / ((asBuiltGroundElevation - asBuiltTipElevation) * 20)
 | QC Alarm 仪器 | `SMM_20250915_1`（`TERRA_SMM_INSTRUMENT`），必须有安装参数且开跑前没有告警条件 |
 
 `tests/auth.setup.ts` 每轮登录一次并存 storageState，其余用例复用，不重复登录。
+
+## 依赖禅道的 `e2e_test` 账号
+
+禅道侧的 API 自动化（导出用例、回写结果）全靠 `.env` 里的 `ZENTAO_ACCOUNT`。
+**这个账号被删掉时，整套会以全部 401 的形式失败**，报错里看不出是账号没了 ——
+2026-09-07 就撞过一次（一次同步之后 `e2e_test` 被删）。
+
+排查第一步先单独验证账号：
+
+```bash
+node -e "import('./scripts/zentao.mjs').then(z=>z.login()).then(t=>console.log('ok',t.length)).catch(e=>console.log('失败:',e.message))"
+```
+
+这个账号同时也是禅道 SSO 按 email 匹配的落点，见 dalex-ops-lab `macmini-v2/sso-zentao-keycloak.md`。
