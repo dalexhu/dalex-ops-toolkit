@@ -35,8 +35,8 @@ Usage: ./tzupdate.sh --jar <path|url> [options]
 
 Options:
   --jar <path|url>       tzupdater.jar, or the tzupdater-*.zip it ships in, as a local
-                         path or an http(s) URL (default: $TZUPDATER_JAR, then
-                         ./tzupdater.jar, then ./tzupdater-*.zip)
+                         path or an http(s) URL (default: $TZUPDATER_JAR, else the
+                         newest tzupdater jar or zip in . or ~/Downloads)
   --java-home <dir>      JDK to update; repeat for several (default: $JAVA_HOME, else
                          the JDK behind the java on $PATH)
   --tzdata <ver|path|url>
@@ -140,14 +140,14 @@ fi
 
 # --- tzupdater.jar -----------------------------------------------------------------
 
+# Without --jar, take the newest tzupdater download in the current directory or
+# ~/Downloads: the jar itself, an unzipped tzupdater-*/ folder, or the zip.
 if [ -z "$JAR_SRC" ]; then
-  if [ -f ./tzupdater.jar ]; then
-    JAR_SRC="./tzupdater.jar"
-  else
-    for z in ./tzupdater-*.zip; do
-      [ -f "$z" ] && JAR_SRC="$z"
-    done
-  fi
+  # shellcheck disable=SC2012
+  JAR_SRC="$(ls -t ./tzupdater.jar ./tzupdater*/tzupdater.jar ./tzupdater*.zip \
+                  "$HOME"/Downloads/tzupdater.jar "$HOME"/Downloads/tzupdater*/tzupdater.jar \
+                  "$HOME"/Downloads/tzupdater*.zip 2>/dev/null | head -n 1)"
+  [ -n "$JAR_SRC" ] && echo "Using $JAR_SRC"
 fi
 if [ -z "$JAR_SRC" ]; then
   cat >&2 <<'MSG'
@@ -157,8 +157,9 @@ Oracle only serves it after a login and a licence click-through, so it cannot be
 fetched automatically from oracle.com:
   1. Download tzupdater-*.zip from
      https://www.oracle.com/java/technologies/javase-tzupdater-downloads.html
-  2. Run this script with --jar <that zip or the jar inside it>, or put it on a
-     server you control and pass --jar https://.../tzupdater.jar
+  2. Leave it in ~/Downloads or the current directory and run this script again,
+     or pass --jar <path>, or put it on a server you control and pass
+     --jar https://.../tzupdater.jar
 MSG
   exit 2
 fi
@@ -245,19 +246,23 @@ while IFS= read -r home; do
   # the tzdata path itself has one.
   if [ -w "$(dirname "$db")" ]; then
     # shellcheck disable=SC2086
-    "$java" -jar "$JAR" $args
+    "$java" -jar "$JAR" $args 2>&1 | tee "$WORK/out"
+    status=${PIPESTATUS[0]}
   elif command -v sudo >/dev/null 2>&1; then
     # shellcheck disable=SC2086
-    sudo "$java" -jar "$JAR" $args
+    sudo "$java" -jar "$JAR" $args 2>&1 | tee "$WORK/out"
+    status=${PIPESTATUS[0]}
   else
     echo "   $(dirname "$db") is not writable and sudo is not available"
     rc=1
     continue
   fi
-  status=$?
 
   after="$(tzdb_version "$db")"
-  if [ "$status" -ne 0 ]; then
+  # tzupdater exits 1 when the JDK already has the target version; that is not a failure.
+  if [ "$status" -ne 0 ] && [ "$before" = "$after" ] && grep -q "has the same version" "$WORK/out"; then
+    echo "   tzdb $after, already current"
+  elif [ "$status" -ne 0 ]; then
     echo "   tzupdater failed (exit $status), tzdb still $after"
     rc=1
   elif [ "$before" = "$after" ]; then

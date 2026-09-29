@@ -53,11 +53,11 @@ containers.
 ### `tzupdate.sh` - update a JDK's tz database to the newest IANA release
 
 Once a JDK shows up as behind, run Oracle's `tzupdater.jar` against it. Oracle serves the
-jar only after a login, so download `tzupdater-*.zip` once by hand, then from the directory
-holding it:
+jar only after a login, so download `tzupdater-*.zip` once by hand into `~/Downloads` (or
+the current directory; `--jar <path|url>` points elsewhere), then:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh) --jar tzupdater-2.3.2.zip
+bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh)
 ```
 
 That updates `$JAVA_HOME` (or the JDK behind `java` on `$PATH`) to IANA's newest tzdata.
@@ -107,10 +107,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/ma
 ### `tzupdate.sh` —— 把 JDK 的时区库更新到 IANA 最新版
 
 发现某个 JDK 的时区库落后后,用 Oracle 的 `tzupdater.jar` 更新它。Oracle 要登录才给下载,
-所以先手工下载一次 `tzupdater-*.zip`,然后在它所在目录执行:
+所以先手工下载一次 `tzupdater-*.zip` 到 `~/Downloads`(或当前目录;放在别处用 `--jar <路径|URL>`),然后执行:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh) --jar tzupdater-2.3.2.zip
+bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh)
 ```
 
 会把 `$JAVA_HOME`(或 `$PATH` 上 `java` 对应的 JDK)更新到 IANA 最新 tzdata。

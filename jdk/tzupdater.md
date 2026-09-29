@@ -53,13 +53,13 @@ sudo $JAVA_HOME/bin/java -jar tzupdater.jar -l file:///path/to/tzdata2026c.tar.g
 ### Scripted: `tzupdate.sh`
 
 [`tzupdate.sh`](tzupdate.sh) wraps the steps above: it takes `tzupdater.jar` (or the zip
-it ships in) from a path or a URL on your own mirror, downloads the tzdata **once** for all
+it ships in) from `~/Downloads`, the current directory, a path or a URL on your own mirror, downloads the tzdata **once** for all
 JDKs, runs the tool with each JDK's own `java` (via `sudo` when `lib/` is not writable),
-and prints the version before and after. Oracle serves the jar only after a login, so the
+and prints the version before and after. A JDK that is already current counts as success. Oracle serves the jar only after a login, so the
 first copy has to be downloaded by hand.
 
 ```bash
-./tzupdate.sh --jar tzupdater-2.3.2.zip                  # $JAVA_HOME, newest IANA tzdata
+./tzupdate.sh                                            # $JAVA_HOME, newest IANA tzdata
 ./tzupdate.sh --jar https://mirror.example/tzupdater.jar \
     --java-home /usr/lib/jvm/java-21 --java-home /usr/lib/jvm/java-17 --tzdata 2026c
 ./tzupdate.sh --check                                    # current version only, no change
@@ -145,13 +145,13 @@ sudo $JAVA_HOME/bin/java -jar tzupdater.jar -l file:///path/to/tzdata2026c.tar.g
 
 ### 脚本:`tzupdate.sh`
 
-[`tzupdate.sh`](tzupdate.sh) 把上面的步骤包成一个脚本:从本地路径或自建镜像的 URL
+[`tzupdate.sh`](tzupdate.sh) 把上面的步骤包成一个脚本:从 `~/Downloads`、当前目录、本地路径或自建镜像的 URL
 拿 `tzupdater.jar`(或装着它的 zip),tzdata **只下载一次**供所有 JDK 使用,用每个 JDK
-自己的 `java` 运行工具(`lib/` 不可写时走 `sudo`),并打印更新前后的版本。
+自己的 `java` 运行工具(`lib/` 不可写时走 `sudo`),并打印更新前后的版本;已是最新也算成功。
 Oracle 要登录才给下载 jar,所以第一份只能手工下载。
 
 ```bash
-./tzupdate.sh --jar tzupdater-2.3.2.zip                  # $JAVA_HOME,IANA 最新 tzdata
+./tzupdate.sh                                            # $JAVA_HOME,IANA 最新 tzdata
 ./tzupdate.sh --jar https://mirror.example/tzupdater.jar \
     --java-home /usr/lib/jvm/java-21 --java-home /usr/lib/jvm/java-17 --tzdata 2026c
 ./tzupdate.sh --check                                    # 只看当前版本,不做修改
