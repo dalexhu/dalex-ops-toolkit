@@ -50,6 +50,20 @@ How the version is read: the first bytes of `tzdb.dat` are `01 00 04 "TZDB" 00 0
 `head` and `tr` are needed, which is why the same one-liner also runs inside busybox
 containers.
 
+### `tzupdate.sh` - update a JDK's tz database to the newest IANA release
+
+Once a JDK shows up as behind, run Oracle's `tzupdater.jar` against it. Oracle serves the
+jar only after a login, so download `tzupdater-*.zip` once by hand, then from the directory
+holding it:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh) --jar tzupdater-2.3.2.zip
+```
+
+That updates `$JAVA_HOME` (or the JDK behind `java` on `$PATH`) to IANA's newest tzdata.
+`--java-home` (repeatable) picks other JDKs, `--tzdata 2026c` pins a release, `--check`
+only reports. Details, options and caveats: [tzupdater.md](tzupdater.md).
+
 ---
 
 ## 中文
@@ -89,3 +103,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/ma
 版本怎么读出来的:`tzdb.dat` 开头是 `01 00 04 "TZDB" 00 01 00 05 "2026a"`,
 把前 16 字节里的非字母数字丢掉就得到 `TZDB2026a`。只用到 `head` 和 `tr`,
 所以同一行命令在 busybox 容器里也能跑。
+
+### `tzupdate.sh` —— 把 JDK 的时区库更新到 IANA 最新版
+
+发现某个 JDK 的时区库落后后,用 Oracle 的 `tzupdater.jar` 更新它。Oracle 要登录才给下载,
+所以先手工下载一次 `tzupdater-*.zip`,然后在它所在目录执行:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/dalexhu/dalex-ops-toolkit/main/jdk/tzupdate.sh) --jar tzupdater-2.3.2.zip
+```
+
+会把 `$JAVA_HOME`(或 `$PATH` 上 `java` 对应的 JDK)更新到 IANA 最新 tzdata。
+`--java-home`(可重复)指定其他 JDK,`--tzdata 2026c` 固定版本,`--check` 只报告不修改。
+详细用法、选项和注意事项见 [tzupdater.md](tzupdater.md)。

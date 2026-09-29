@@ -6,7 +6,7 @@
 | Directory | Scripts | What they answer |
 |---|---|---|
 | [`tz/`](tz/) | [`tzcheck.sh`](tz/tzcheck.sh), [`tzcheck.ps1`](tz/tzcheck.ps1) | Which tz database does each host carry, and what will a zone actually do this autumn? |
-| [`jdk/`](jdk/) | [`jdkcheck.sh`](jdk/jdkcheck.sh) | Which JDKs are installed, which are actually running, and what tz database each one bundles? |
+| [`jdk/`](jdk/) | [`jdkcheck.sh`](jdk/jdkcheck.sh), [`tzupdate.sh`](jdk/tzupdate.sh) | Which JDKs are installed, which are actually running, and what tz database each one bundles? Then bring that tz database up to date in place. |
 | [`bench/`](bench/) | [`perfcheck.sh`](bench/perfcheck.sh) | How does this machine perform on CPU, memory and disk, sized to its own cores and quota, as one composite score? |
 | [`macmini/`](macmini/) | [`macmini-init.sh`](macmini/macmini-init.sh) | Is this Mac mini set up as an always-on VM host — never sleeps, never auto-installs updates, comes back after a power cut — and if not, apply exactly what differs? |
 
