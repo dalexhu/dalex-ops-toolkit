@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.2.3"
+VERSION="1.3.0"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -23,7 +23,7 @@ FIREWALL_WANT=""      # "" | on | off
 AUTOLOGIN_USER=""     # default: the login user (set after parsing); --no-autologin skips it
 NO_AUTOLOGIN=0
 LOCK_MIN=5            # screen saver after N minutes, lock engages at once; 0 = never lock
-INSTALL_VM=""         # "" | parallels | vmware-fusion | utm
+INSTALL_VM=""         # "" | parallels | vmware-fusion | utm | qemu
 KEEP_WIFI=0
 KEEP_SECURITY=0       # keep ConfigDataInstall / CriticalUpdateInstall on
 NO_DOWNLOAD=0         # also turn automatic download off (default: check + download, never install)
@@ -57,12 +57,17 @@ What it checks / sets:
   timezone     system time zone (only with --timezone)
   ntp          "set date and time automatically" on
   firewall     application firewall (only with --firewall)
-  autologin    automatic login for the login user, so VMs that start at login come
-               back after a power cut. On by default; --no-autologin skips it. Needs
-               FileVault off. --apply asks for the account password once (typed
-               locally, handed to sysadminctl for auto-login and the lock, never stored).
+  autologin    automatic login for the login user, so VMs and agents that start at login
+               come back after a power cut (VMs run by a LaunchDaemon, e.g. QEMU, start
+               without it). On by default; --no-autologin skips it. Needs FileVault off.
+               --apply asks for the account password once (typed locally, handed to
+               sysadminctl for auto-login and the lock, never stored).
   filevault    reported; On blocks auto-login and unattended reboots
-  hypervisor   Parallels / VMware Fusion / UTM / OrbStack present (install with --install-vm)
+  known issues reported, never changed: macOS 26.0-26.3 stops opening outbound TCP after
+               49.7 days of uptime (fixed in 26.4); zoneinfo older than 2026c while the
+               zone is America/Edmonton (Alberta stays on UTC-06:00 from 2026-11-01)
+  hypervisor   Parallels / VMware Fusion / UTM / OrbStack / QEMU present (install with
+               --install-vm); QEMU guests run by LaunchDaemons are listed
   updaters     third-party auto-updaters (Google Keystone etc.) — reported only
 
 Options:
@@ -73,8 +78,8 @@ Options:
   --autologin <user>        Account for automatic login (default: the user running this)
   --no-autologin            Do not expect / set automatic login
   --lock <minutes>          Idle minutes before the screen saver + lock (default 5; 0 = never)
-  --install-vm <name>       With --apply, `brew install --cask <name>` when no hypervisor
-                            is present: parallels | vmware-fusion | utm
+  --install-vm <name>       With --apply, install a hypervisor via Homebrew when none is
+                            present: parallels | vmware-fusion | utm (casks) | qemu (formula)
   --keep-wifi               Do not expect / turn off Wi-Fi
   --keep-security-updates   Leave XProtect / security-response auto-install on
   --no-auto-download        Also turn automatic download off (default keeps check + download on)
@@ -125,8 +130,8 @@ done
 case "$FIREWALL_WANT" in ''|on|off) ;; *) echo "--firewall must be on or off" >&2; exit 2 ;; esac
 case "$LOCK_MIN" in ''|*[!0-9]*) echo "--lock must be a number of minutes" >&2; exit 2 ;; esac
 [ -n "$AUTOLOGIN_USER" ] || AUTOLOGIN_USER="$(id -un)"
-case "$INSTALL_VM" in ''|parallels|vmware-fusion|utm) ;;
-  *) echo "--install-vm must be parallels, vmware-fusion or utm" >&2; exit 2 ;; esac
+case "$INSTALL_VM" in ''|parallels|vmware-fusion|utm|qemu) ;;
+  *) echo "--install-vm must be parallels, vmware-fusion, utm or qemu" >&2; exit 2 ;; esac
 
 # ---------------------------------------------------------------------------
 # output helpers
@@ -496,6 +501,41 @@ case "$NTP_RAW" in
 esac
 
 # ---------------------------------------------------------------------------
+# 6b. known issues -- reported, never changed
+# ---------------------------------------------------------------------------
+head2 "known issues"
+# macOS 26.0-26.3: the TCP timestamp clock wraps at 2^32 ms (49.7 days of uptime); from then on outbound
+# connections cannot get a source port (EADDRNOTAVAIL) while inbound ones (ssh) still work, so the host
+# looks fine from outside. Fixed in 26.4. Whether 15 / 14 updates carry the fix is not confirmed.
+# "{ sec = 1772060799, usec = 918643 } ...": anchor on the first field, a greedy .*sec would land on usec
+BOOT_S="$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^\{ sec = ([0-9]+),.*/\1/p')"
+UP_DAYS=$(( ( $(date +%s) - ${BOOT_S:-$(date +%s)} ) / 86400 ))
+PR_FIRST="$(sysctl -n net.inet.ip.portrange.first 2>/dev/null)"
+OS_MAJ="${OS_VER%%.*}"; OS_MIN="$(printf '%s' "$OS_VER" | cut -d. -f2)"
+case "$OS_MAJ" in ''|*[!0-9]*) OS_MAJ=0 ;; esac
+case "$OS_MIN" in ''|*[!0-9]*) OS_MIN=0 ;; esac
+if [ "$OS_MAJ" -eq 26 ] && [ "$OS_MIN" -lt 4 ]; then
+  if [ "$UP_DAYS" -ge 49 ]; then
+    row WARN "49.7-day TCP clock" "$OS_VER, up $UP_DAYS days" "outbound TCP may fail; reboot or 26.4+ (portrange.first $PR_FIRST)"
+  else
+    row WARN "49.7-day TCP clock" "$OS_VER, up $UP_DAYS days" "outbound TCP stops at 49.7 days; upgrade to 26.4+"
+  fi
+elif [ "$OS_MAJ" -lt 26 ]; then
+  row INFO "49.7-day TCP clock" "$OS_VER, up $UP_DAYS days" "fix not confirmed for this release"
+else
+  row OK "49.7-day TCP clock" "$OS_VER" "fixed from 26.4"
+fi
+# Alberta stays on UTC-06:00 from 2026-11-01 (tzdb 2026c); older zoneinfo keeps switching Edmonton to -07:00.
+ZI_VER="$(cat /var/db/timezone/zoneinfo/+VERSION 2>/dev/null || cat /usr/share/zoneinfo/+VERSION 2>/dev/null)"
+if [ -z "$ZI_VER" ]; then
+  row INFO "zoneinfo" "unknown"
+elif [ "$TZ_CUR" = "America/Edmonton" ] && [ "$ZI_VER" \< "2026c" ]; then
+  row WARN "zoneinfo" "$ZI_VER" "older than 2026c: Edmonton is an hour off from 2026-11-01; upgrade macOS"
+else
+  row OK "zoneinfo" "$ZI_VER"
+fi
+
+# ---------------------------------------------------------------------------
 # 7. firewall, auto-login, FileVault
 # ---------------------------------------------------------------------------
 head2 "security"
@@ -520,6 +560,17 @@ case "$FV" in
   *"is On"*)  row WARN "FileVault" "on" "blocks auto-login and unattended reboot" ;;
   *)          row INFO "FileVault" "${FV:-unknown}" ;;
 esac
+
+# QEMU guests run by LaunchDaemons start at boot without anyone logged in; the GUI hypervisors
+# (and anything in a LaunchAgent) need the login. Used by the auto-login note and the hypervisor section.
+QEMU_BIN="$(command -v qemu-system-aarch64 2>/dev/null || ls /opt/homebrew/bin/qemu-system-aarch64 \
+            /usr/local/bin/qemu-system-aarch64 /opt/homebrew/bin/qemu-system-x86_64 /usr/local/bin/qemu-system-x86_64 2>/dev/null | head -1)"
+QEMU_DAEMONS="$(grep -lE 'qemu-system|qemu-supervise' /Library/LaunchDaemons/*.plist 2>/dev/null \
+                | sed 's#.*/##; s#\.plist$##' | tr '\n' ' ')"
+GUI_HV=0
+for app in "Parallels Desktop" "VMware Fusion" "UTM"; do [ -d "/Applications/$app.app" ] && GUI_HV=1; done
+AL_NOTE="VMs that start at login survive a reboot"
+[ -n "$QEMU_DAEMONS" ] && [ "$GUI_HV" -eq 0 ] && AL_NOTE="login agents come back after a reboot; LaunchDaemon VMs need no login"
 
 AL_USER="$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null)"
 # status wording: "Automatic login is OFF." vs "Automatic login user: <name>"
@@ -557,7 +608,7 @@ set_autologin() {
 if [ "$NO_AUTOLOGIN" -eq 1 ]; then
   row INFO "auto-login" "${AL_USER:-off}" "--no-autologin: not managed"
 elif [ "$AL_USER" = "$AUTOLOGIN_USER" ] && { autologin_on || [ -e /etc/kcpassword ]; }; then
-  row OK "auto-login" "$AL_USER" "VMs that start at login survive a reboot"
+  row OK "auto-login" "$AL_USER" "$AL_NOTE"
 elif [ "$MODE" = "apply" ]; then
   case "$FV" in
     *"is On"*) row FAIL "auto-login" "${AL_USER:-off}" "turn FileVault off first (sudo fdesetup disable)" ;;
@@ -580,19 +631,35 @@ for app in "Parallels Desktop" "VMware Fusion" "UTM" "OrbStack" "VirtualBox"; do
   p="/Applications/$app.app"
   [ -d "$p" ] && { FOUND="$FOUND$app $(app_ver "$p"); "; }
 done
+if [ -n "$QEMU_BIN" ]; then
+  QEMU_VER="$("$QEMU_BIN" --version 2>/dev/null | head -1 | sed -E 's/.*version ([0-9][0-9.]*).*/\1/')"
+  FOUND="${FOUND}QEMU ${QEMU_VER:-?}; "
+fi
 if [ -n "$FOUND" ]; then
   row OK "installed" "${FOUND%; }"
 elif [ "$MODE" = "apply" ] && [ -n "$INSTALL_VM" ]; then
   BREW="$(command -v brew 2>/dev/null || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -1)"
   if [ -z "$BREW" ]; then
     row FAIL "install $INSTALL_VM" "Homebrew missing" "install brew first, or install the app by hand"
+  elif [ "$INSTALL_VM" = "qemu" ]; then
+    # a formula, not a cask; it has no app to open, and its guests are yours to define (LaunchDaemons)
+    if "$BREW" install qemu >/dev/null 2>&1; then row DONE "install qemu" "installed via brew" "qemu-system-* in $(dirname "$BREW")"
+    else row FAIL "install qemu" "brew install qemu failed"; fi
   elif "$BREW" install --cask "$INSTALL_VM" >/dev/null 2>&1; then
     row DONE "install $INSTALL_VM" "installed via brew" "open it once to finish setup / license"
   else
     row FAIL "install $INSTALL_VM" "brew install --cask $INSTALL_VM failed"
   fi
 else
-  row FIX "installed" "none" "install Parallels / VMware Fusion / UTM (see --install-vm)"
+  row FIX "installed" "none" "install Parallels / VMware Fusion / UTM / QEMU (see --install-vm)"
+fi
+if [ -n "$QEMU_DAEMONS" ]; then
+  row INFO "qemu boot jobs" "${QEMU_DAEMONS% }" "LaunchDaemons: start at boot, no login needed"
+fi
+if [ -n "$QEMU_BIN" ]; then
+  # guests by their -name, from the running processes (readable without sudo)
+  ps -axo command= 2>/dev/null | grep -E '[q]emu-system-[a-z0-9_]+ ' | sed -nE 's/.* -name ([^ ,]+).*/\1/p' | sort -u \
+    | while read -r name; do row INFO "qemu vm" "$name" "running"; done
 fi
 if [ -d "/Applications/Parallels Desktop.app" ]; then
   PRLCTL="/Applications/Parallels Desktop.app/Contents/MacOS/prlctl"

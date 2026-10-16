@@ -27,9 +27,10 @@ items — running it twice changes nothing the second time.
 | login banner | login window shows `<hostname> \| <ip>` so whoever is at the console knows which box it is |
 | hostname / time zone / firewall | enforced only when you pass `--hostname`, `--timezone`, `--firewall` |
 | network time | "set date and time automatically" on |
-| auto-login | on for the login user (`--autologin <user>` to pick another, `--no-autologin` to skip). VMs and LaunchAgents that start at login only come back after a power cut when someone is logged in; auto-login plus the lock above gives that without leaving the console open. Needs FileVault off |
+| auto-login | on for the login user (`--autologin <user>` to pick another, `--no-autologin` to skip). VMs and LaunchAgents that start at login only come back after a power cut when someone is logged in; auto-login plus the lock above gives that without leaving the console open. VMs run by a LaunchDaemon (QEMU) start at boot without it. Needs FileVault off |
 | FileVault | reported; **on** blocks auto-login and unattended reboots, and hides ssh until someone unlocks the console |
-| hypervisor | Parallels Desktop / VMware Fusion / UTM / OrbStack detected, VMs listed; `--install-vm` installs one via Homebrew |
+| known issues | reported, never changed: macOS 26.0–26.3 stops opening outbound TCP connections after 49.7 days of uptime (fixed in 26.4; inbound ssh keeps working, so the host looks fine from outside); zoneinfo older than 2026c while the zone is `America/Edmonton` (Alberta stays on UTC−06:00 from 2026-11-01) |
+| hypervisor | Parallels Desktop / VMware Fusion / UTM / OrbStack / QEMU (Homebrew) detected, VMs listed — for QEMU, the LaunchDaemons that start guests at boot and the running guests; `--install-vm` installs one via Homebrew |
 | updaters | third-party auto-updaters (Google Keystone, Sparkle, …) listed, not touched |
 
 #### Run it
@@ -65,7 +66,8 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 --autologin <user>        Account for automatic login (default: the user running the script)
 --no-autologin            Do not expect / set automatic login
 --lock <minutes>          Idle minutes before the screen saver + lock (default 5; 0 = never)
---install-vm <name>       With --apply, brew install --cask parallels | vmware-fusion | utm
+--install-vm <name>       With --apply, brew install --cask parallels | vmware-fusion | utm,
+                          or brew install qemu
 --keep-wifi               Do not expect / turn off Wi-Fi
 --keep-security-updates   Leave XProtect / security-response auto-install on
 --no-auto-download        Also turn automatic download off
@@ -92,7 +94,7 @@ or a host unreachable · `2` usage error or not macOS.
 #### Sample output
 
 ```
-================ mini-a — macOS 26.6.2 — Mac16,10 ================
+================ mini-a — macOS 26.7.1 — Mac16,10 ================
   Apple M4, 32 GB, up 41 mins, mode: check
 
 power (pmset, AC)
@@ -125,15 +127,21 @@ identity
   OK    time zone                    America/Edmonton
   OK    network time (ntp)           on
 
+known issues
+  OK    49.7-day TCP clock           26.7.1                         fixed from 26.4
+  OK    zoneinfo                     2026e
+
 security
   OK    application firewall         off
   WARN  FileVault                    on                             blocks auto-login and unattended reboot
   FIX   auto-login                   off                            want ops
 
 hypervisor
-  OK    installed                    VMware Fusion 26.0.1
+  OK    installed                    QEMU 11.1.2
+  INFO  qemu boot jobs               lab.example.vm.app1            LaunchDaemons: start at boot, no login needed
+  INFO  qemu vm                      app1                           running
 
-mini-a: 11 items differ, 13 ok, 3 warnings — run again with --apply
+mini-a: 11 items differ, 15 ok, 1 warnings — run again with --apply
 ```
 
 ---
@@ -157,9 +165,10 @@ mini-a: 11 items differ, 13 ok, 3 warnings — run again with --apply
 | 登录界面横幅 | 登录窗口显示 `<主机名> \| <IP>`,在机房看一眼就知道是哪台 |
 | 主机名 / 时区 / 防火墙 | 只有传了 `--hostname`、`--timezone`、`--firewall` 才会强制 |
 | 网络对时 | “自动设置日期与时间”开 |
-| 自动登录 | 默认对登录用户开启(`--autologin <user>` 换账号,`--no-autologin` 跳过)。随登录启动的虚拟机和 LaunchAgent,断电重启后只有有人登录才会回来;自动登录加上面的锁屏,既能回来又不把控制台敞着。需要 FileVault 关闭 |
+| 自动登录 | 默认对登录用户开启(`--autologin <user>` 换账号,`--no-autologin` 跳过)。随登录启动的虚拟机和 LaunchAgent,断电重启后只有有人登录才会回来;自动登录加上面的锁屏,既能回来又不把控制台敞着。由 LaunchDaemon 启动的虚拟机(QEMU)开机即起,不依赖它。需要 FileVault 关闭 |
 | FileVault | 只报告;**开着**会挡住自动登录和无人值守重启,重启后 ssh 也连不上,直到有人在本机解锁 |
-| 虚拟机软件 | 检测 Parallels Desktop / VMware Fusion / UTM / OrbStack 并列出虚拟机;`--install-vm` 通过 Homebrew 安装 |
+| 已知问题 | 只报告、不修改:macOS 26.0–26.3 开机满 49.7 天后再也开不出出站 TCP 连接(26.4 修复;入站 ssh 照常,从外面看不出来);时区是 `America/Edmonton` 而 zoneinfo 早于 2026c(Alberta 自 2026-11-01 起常年 UTC−06:00) |
+| 虚拟机软件 | 检测 Parallels Desktop / VMware Fusion / UTM / OrbStack / QEMU(Homebrew)并列出虚拟机——QEMU 列出开机启动客户机的 LaunchDaemon 和正在运行的客户机;`--install-vm` 通过 Homebrew 安装 |
 | 第三方更新器 | 列出 Google Keystone、Sparkle 之类的自动更新器,不动它们 |
 
 #### 运行
@@ -195,7 +204,8 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 --autologin <user>        自动登录的账号(默认:运行脚本的用户)
 --no-autologin            不要求 / 不设置自动登录
 --lock <分钟>             空闲多少分钟后启动屏保并锁屏(默认 5;0 = 永不)
---install-vm <name>       --apply 时 brew install --cask parallels | vmware-fusion | utm
+--install-vm <name>       --apply 时 brew install --cask parallels | vmware-fusion | utm,
+                          或 brew install qemu
 --keep-wifi               不要求 / 不关闭 Wi-Fi
 --keep-security-updates   保留 XProtect / 安全响应的自动安装
 --no-auto-download        连自动下载也关掉
