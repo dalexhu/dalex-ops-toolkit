@@ -14,7 +14,7 @@
 
 set -uo pipefail
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 
 MODE="check"          # check | apply
 HOSTNAME_WANT=""
@@ -322,6 +322,9 @@ else
   row FIX "screensaver idleTime" "${SS_IDLE:-default (1200)}" "want $LOCK_SECS"
 fi
 
+# sysadminctl -screenLock only works from the console user's GUI session: over ssh it is refused even with
+# the right password, also inside the user's launchd namespace (tried; the same password then set auto-login,
+# which has a fallback -- /etc/kcpassword -- that the lock does not). So in an ssh session it can only report.
 SL_RAW="$(sysadminctl -screenLock status 2>&1)"
 case "$SL_RAW" in
   *immediate*)   SL_CUR="immediate" ;;
@@ -336,6 +339,7 @@ elif [ "$SL_CUR" = "immediate" ]; then
 elif [ "$MODE" = "apply" ]; then
   if ! ask_pw; then row FAIL "screen lock" "$SL_CUR" "needs the account password on a tty"
   elif run sysadminctl -screenLock immediate -password "$PW"; then row DONE "screen lock" "$SL_CUR -> immediate"
+  elif [ -n "${SSH_CONNECTION:-}" ]; then row FAIL "screen lock" "$SL_CUR" "not settable over ssh: run this in Terminal at the Mac, or Lock Screen settings"
   else row FAIL "screen lock" "$SL_CUR" "sysadminctl -screenLock refused (wrong password?)"; fi
 else
   row FIX "screen lock" "$SL_CUR" "want immediate"

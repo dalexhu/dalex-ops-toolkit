@@ -86,6 +86,9 @@ or a host unreachable · `2` usage error or not macOS.
 - Remove third-party updaters or turn FileVault off. It tells you; you decide.
 - Run as root. Per-user items (the keep-awake agent, the screen saver) must land in the login
   user's domain, so run it as that user and let it `sudo` inside.
+- Set the screen lock over ssh. `sysadminctl -screenLock` is refused outside the console user's GUI session,
+  even with the right password; run `--apply` in Terminal at the Mac (or Screen Sharing), or set
+  Lock Screen > "Require password … immediately" in System Settings.
 - Store a password. `--apply` asks for the account password once, on the terminal, because
   `sysadminctl` needs it for auto-login and the screen lock; it is handed to those two
   calls and cleared. Auto-login itself stores an obfuscated copy in `/etc/kcpassword` —
@@ -222,6 +225,8 @@ bash macmini-init.sh --remote mini1,mini2 --apply --timezone America/Edmonton
 - 不删第三方更新器,不关 FileVault。它告诉你,你来定。
 - 不以 root 运行。用户级的项(防休眠 agent、屏保)必须落在登录用户的域里,所以用那个用户跑,
   脚本内部自己 `sudo`。
+- 不能经 ssh 设置锁屏。`sysadminctl -screenLock` 在控制台用户的图形会话之外一律被拒绝(口令正确也一样);
+  请在 Mac 本机的“终端”(或屏幕共享)里跑 `--apply`,或在系统设置 → 锁定屏幕里把“需要密码”设为“立即”。
 - 不保存密码。`--apply` 会在终端上问一次账号密码,因为 `sysadminctl` 设自动登录和锁屏都要它;
   只传给这两次调用,用完即清。自动登录本身会把密码混淆后存进 `/etc/kcpassword`,这是
   macOS 的实现方式,所以机器要放在能管住物理接触的地方。
