@@ -138,7 +138,7 @@ fi
 
 say()   { [ "$QUIET" -eq 1 ] || printf "%b\n" "$*"; }
 head2() { [ "$QUIET" -eq 1 ] || printf "\n${C_HEAD}%s${C_RESET}\n" "$*"; }
-kv()    { [ "$QUIET" -eq 1 ] || printf "  %-22s %s\n" "$1" "$2"; }
+kv()    { [ "$QUIET" -eq 1 ] || printf "  %-22s %b\n" "$1" "$2"; }
 has()   { command -v "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ OS_KIND="linux"
 # the address the machine actually reaches the network with, not whatever
 # /etc/hosts says about the name
 primary_ip() {
-  local ip iface
+  local ip="" iface=""
   if has ip; then
     ip="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)"
   fi
